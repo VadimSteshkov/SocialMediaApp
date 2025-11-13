@@ -1,8 +1,12 @@
 name: Test Application
 
-# Execute tests on pull request only
+# Execute tests on pull request and push to main/master
 on:
   pull_request:
+    branches:
+      - main
+      - master
+  push:
     branches:
       - main
       - master
