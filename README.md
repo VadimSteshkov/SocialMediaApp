@@ -79,9 +79,8 @@ The `posts` table contains the following fields:
 ## GitHub Actions
 
 The project includes a GitHub Actions workflow (`.github/workflows/test.yml`) that:
-- Runs automatically on pull requests to `main` or `master` branches
+- Runs automatically on pull requests to `main` branch
 - Tests the application using the test suite
-- Can be manually triggered via workflow_dispatch
 
 ## Database Management via Terminal
 
