@@ -1,0 +1,10 @@
+# Testing dependencies
+pytest>=7.4.0
+pytest-html>=3.2.0
+pytest-cov>=4.1.0
+
+# No other external dependencies required
+# Python standard library modules are used:
+# - sqlite3 (database)
+# - datetime (timestamps)
+
