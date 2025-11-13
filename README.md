@@ -61,11 +61,11 @@ python -m unittest test_app -v
 ```
 
 **Pytest provides:**
-- ✅ Color-coded output (green for passed, red for failed)
-- ✅ Progress indicators (20%, 40%, etc.)
-- ✅ Detailed timing information
-- ✅ Better error messages and stack traces
-- ✅ Platform and Python version info
+- Color-coded output (green for passed, red for failed)
+- Progress indicators (20%, 40%, etc.)
+- Detailed timing information
+- Better error messages and stack traces
+- Platform and Python version info
 
 ## Database Schema
 
