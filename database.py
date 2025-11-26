@@ -133,6 +133,80 @@ class Database:
         
         return results
     
+    def get_post_by_id(self, post_id: int) -> Optional[Tuple[int, str, str, str, str]]:
+        """
+        Retrieve a post by its ID.
+        
+        Args:
+            post_id: The ID of the post to retrieve
+            
+        Returns:
+            Tuple of (id, image, text, user, created_at) or None if not found
+        """
+        conn = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT id, image, text, user, created_at
+            FROM posts
+            WHERE id = ?
+        """, (post_id,))
+        
+        result = cursor.fetchone()
+        conn.close()
+        
+        return result
+    
+    def search_posts_by_user(self, user: str) -> List[Tuple[int, str, str, str, str]]:
+        """
+        Search for posts by username.
+        
+        Args:
+            user: Username to search for
+            
+        Returns:
+            List of tuples containing (id, image, text, user, created_at)
+        """
+        conn = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT id, image, text, user, created_at
+            FROM posts
+            WHERE user = ?
+            ORDER BY created_at DESC
+        """, (user,))
+        
+        results = cursor.fetchall()
+        conn.close()
+        
+        return results
+    
+    def search_posts_by_text(self, text_query: str) -> List[Tuple[int, str, str, str, str]]:
+        """
+        Search for posts by text content (case-insensitive partial match).
+        
+        Args:
+            text_query: Text to search for in post content
+            
+        Returns:
+            List of tuples containing (id, image, text, user, created_at)
+        """
+        conn = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT id, image, text, user, created_at
+            FROM posts
+            WHERE text LIKE ?
+            ORDER BY created_at DESC
+        """, (f'%{text_query}%',))
+        
+        results = cursor.fetchall()
+        conn.close()
+        
+        return results
+    
     def delete_all_posts(self):
         """Delete all posts from the database and reset the ID counter (useful for testing)."""
         conn = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
