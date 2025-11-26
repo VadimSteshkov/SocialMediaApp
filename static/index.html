@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Social Media App</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Social Media App</h1>
+        </header>
+
+        <nav class="tabs">
+            <button class="tab-button active" onclick="showSection('submit')">Submit Post</button>
+            <button class="tab-button" onclick="showSection('list')">All Posts</button>
+            <button class="tab-button" onclick="showSection('search')">Search</button>
+        </nav>
+
+        <!-- Submit Post Section -->
+        <section id="submit" class="section active">
+            <h2>Create New Post</h2>
+            <form id="postForm" onsubmit="submitPost(event)">
+                <div class="form-group">
+                    <label for="user">Username:</label>
+                    <input type="text" id="user" name="user" required placeholder="Enter your username">
+                </div>
+                
+                <div class="form-group">
+                    <label for="text">Post Text:</label>
+                    <textarea id="text" name="text" required rows="4" placeholder="What's on your mind?"></textarea>
+                </div>
+                
+                <div class="form-group">
+                    <label for="image">Image URL:</label>
+                    <input type="url" id="image" name="image" required placeholder="https://example.com/image.jpg">
+                </div>
+                
+                <button type="submit" class="btn btn-primary">Submit Post</button>
+            </form>
+            <div id="submitMessage" class="message"></div>
+        </section>
+
+        <!-- List All Posts Section -->
+        <section id="list" class="section">
+            <h2>All Posts</h2>
+            <button onclick="loadAllPosts()" class="btn btn-secondary">Refresh Posts</button>
+            <div id="postsList" class="posts-container">
+                <p class="loading">Loading posts...</p>
+            </div>
+        </section>
+
+        <!-- Search Section -->
+        <section id="search" class="section">
+            <h2>Search Posts</h2>
+            <div class="search-options">
+                <div class="form-group">
+                    <label for="searchUser">Search by Username:</label>
+                    <input type="text" id="searchUser" name="searchUser" placeholder="Enter username">
+                    <button onclick="searchByUser()" class="btn btn-primary">Search</button>
+                </div>
+            </div>
+            <div id="searchResults" class="posts-container">
+                <p class="info">Enter a username and click Search to find posts.</p>
+            </div>
+        </section>
+    </div>
+
+    <script src="/app.js"></script>
+</body>
+</html>
+
