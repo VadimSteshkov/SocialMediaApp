@@ -6,6 +6,9 @@ Simple social media app for the Software Engineering course. This application st
 
 - Store social media posts with image, text, and user information
 - Retrieve the latest post from the database
+- REST API built with FastAPI
+- Web frontend (HTML/CSS/JavaScript)
+- Automatic OpenAPI specification generation
 - Comprehensive test suite
 - GitHub Actions CI/CD for automated testing on pull requests
 
@@ -13,10 +16,17 @@ Simple social media app for the Software Engineering course. This application st
 
 ```
 SocialMediaApp/
+├── api.py              # FastAPI REST API server
 ├── app.py              # Main application with sample posts
 ├── database.py         # Database operations and schema
-├── test_app.py         # Test suite
+├── test_app.py         # Database tests
+├── test_api.py         # REST API tests
 ├── requirements.txt    # Python dependencies
+├── openapi.json        # OpenAPI specification (auto-generated)
+├── static/             # Web frontend files
+│   ├── index.html      # Main HTML page
+│   ├── style.css       # Styles
+│   └── app.js          # JavaScript client
 └── .github/
     └── workflows/
         └── test.yml    # GitHub Actions workflow
@@ -25,11 +35,69 @@ SocialMediaApp/
 ## Requirements
 
 - Python 3.11 or higher
-- No external dependencies (uses Python standard library)
+- FastAPI and Uvicorn (see requirements.txt)
 
 ## Usage
 
-### Running the Application
+### Installation
+
+```bash
+pip install -r requirements.txt
+```
+
+### Running the REST API Server
+
+```bash
+python api.py
+```
+
+The server will start on `http://localhost:5001` (or port specified by `PORT` environment variable).
+
+### Accessing the Web Interface
+
+Once the server is running, open your browser and navigate to:
+```
+http://localhost:5001
+```
+
+The web interface provides:
+- **Submit Post**: Create new posts
+- **All Posts**: View all posts
+- **Search**: Search posts by username
+
+### API Endpoints
+
+- `GET /api/posts` - Get all posts
+- `POST /api/posts` - Create a new post
+- `GET /api/posts/{id}` - Get a specific post by ID
+- `GET /api/posts/search?user={username}` - Search posts by user
+- `GET /api/posts/search?text={query}` - Search posts by text
+- `GET /api/health` - Health check
+
+### API Documentation
+
+FastAPI automatically provides interactive API documentation:
+
+- **Swagger UI**: `http://localhost:5001/docs`
+- **OpenAPI JSON**: `http://localhost:5001/openapi.json`
+
+### Getting OpenAPI JSON Specification
+
+To save the OpenAPI JSON specification to a file:
+
+**With formatting (recommended):**
+```bash
+curl -s http://localhost:5001/openapi.json | python -m json.tool > openapi.json
+```
+
+**Without formatting (minified):**
+```bash
+curl http://localhost:5001/openapi.json -o openapi.json
+```
+
+**Note:** The server must be running for these commands to work.
+
+### Running the Original Application
 
 ```bash
 python app.py
@@ -41,31 +109,25 @@ This will:
 
 ### Running Tests
 
-**Using pytest (recommended - better output):**
-
+**Database tests:**
 ```bash
-# Install dependencies first
-pip install -r requirements.txt
-
-# Run tests with pytest (colorful, detailed output)
 pytest test_app.py -v
-
-# Or with coverage report
-pytest test_app.py -v --cov=. --cov-report=html
 ```
 
-**Using unittest (standard library):**
-
+**REST API tests:**
 ```bash
-python -m unittest test_app -v
+pytest test_api.py -v
 ```
 
-**Pytest provides:**
-- Color-coded output (green for passed, red for failed)
-- Progress indicators (20%, 40%, etc.)
-- Detailed timing information
-- Better error messages and stack traces
-- Platform and Python version info
+**All tests:**
+```bash
+pytest test_*.py -v
+```
+
+**With coverage report:**
+```bash
+pytest test_*.py -v --cov=. --cov-report=html
+```
 
 ## Database Schema
 
