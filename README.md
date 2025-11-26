@@ -79,7 +79,6 @@ The web interface provides:
 FastAPI automatically provides interactive API documentation:
 
 - **Swagger UI**: `http://localhost:5001/docs`
-- **ReDoc**: `http://localhost:5001/redoc`
 - **OpenAPI JSON**: `http://localhost:5001/openapi.json`
 
 ### Getting OpenAPI JSON Specification
