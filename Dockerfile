@@ -9,10 +9,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PORT=5001
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    && rm -rf /var/lib/apt/lists/*
+# No system dependencies needed
+# All packages in requirements.txt have pre-built wheels (no compilation needed)
 
 # Copy requirements first for better caching
 COPY requirements.txt .

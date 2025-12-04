@@ -21,15 +21,23 @@ SocialMediaApp/
 ├── database.py         # Database operations and schema
 ├── test_app.py         # Database tests
 ├── test_api.py         # REST API tests
+├── test_social_features.py  # Social features tests
 ├── requirements.txt    # Python dependencies
+├── Dockerfile          # Docker container definition
+├── docker-compose.yml  # Docker Compose configuration
+├── .dockerignore       # Files to exclude from Docker build
+├── DOCKER.md           # Docker documentation
 ├── openapi.json        # OpenAPI specification (auto-generated)
 ├── static/             # Web frontend files
 │   ├── index.html      # Main HTML page
 │   ├── style.css       # Styles
-│   └── app.js          # JavaScript client
+│   ├── app.js          # JavaScript client
+│   └── icons/
+│       └── logo.png    # Application logo
 └── .github/
     └── workflows/
-        └── test.yml    # GitHub Actions workflow
+        ├── test.yml              # Test workflow
+        └── docker-build.yml      # Docker build workflow
 ```
 
 ## Requirements
@@ -39,19 +47,59 @@ SocialMediaApp/
 
 ## Usage
 
-### Installation
+### Option 1: Run Locally (Without Docker)
+
+#### Installation
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### Running the REST API Server
+#### Running the REST API Server
 
 ```bash
 python api.py
 ```
 
 The server will start on `http://localhost:5001` (or port specified by `PORT` environment variable).
+
+### Option 2: Run with Docker (Recommended for Deployment)
+
+#### Using Docker Compose (Easiest)
+
+```bash
+# Build and start the container
+docker-compose up
+
+# Or run in background
+docker-compose up -d
+
+# Stop the container
+docker-compose down
+```
+
+#### Using Docker directly
+
+```bash
+# Build the image
+docker build -t social-media-api .
+
+# Run the container
+docker run -p 5001:5001 social-media-api
+
+# Run with volume for database persistence
+docker run -p 5001:5001 -v $(pwd)/data:/app/data social-media-api
+```
+
+#### Pull from GitHub Container Registry
+
+After pushing to GitHub, the container is automatically built and available at:
+```bash
+docker pull ghcr.io/vadimsteshkov/socialmediaapp:latest
+docker run -p 5001:5001 ghcr.io/vadimsteshkov/socialmediaapp:latest
+```
+
+See [DOCKER.md](DOCKER.md) for detailed Docker documentation.
 
 ### Accessing the Web Interface
 
@@ -140,9 +188,17 @@ The `posts` table contains the following fields:
 
 ## GitHub Actions
 
-The project includes a GitHub Actions workflow (`.github/workflows/test.yml`) that:
+The project includes GitHub Actions workflows:
+
+### Test Workflow (`.github/workflows/test.yml`)
 - Runs automatically on pull requests to `main` branch
 - Tests the application using the test suite
+
+### Docker Build Workflow (`.github/workflows/docker-build.yml`)
+- Automatically builds Docker container on push to `main` or `feature/docker-container`
+- Pushes container to GitHub Container Registry (ghcr.io)
+- Uses caching for faster builds
+- Container available at: `ghcr.io/vadimsteshkov/socialmediaapp`
 
 ## Database Management via Terminal
 
