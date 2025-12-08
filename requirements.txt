@@ -2,6 +2,9 @@
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 
+# Database
+psycopg2-binary>=2.9.9
+
 # Testing dependencies
 pytest>=7.4.0
 pytest-html>=3.2.0
@@ -9,6 +12,6 @@ pytest-cov>=4.1.0
 httpx>=0.25.0
 
 # Python standard library modules are used:
-# - sqlite3 (database)
+# - sqlite3 (database, fallback)
 # - datetime (timestamps)
 

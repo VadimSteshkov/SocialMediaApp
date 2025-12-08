@@ -65,6 +65,28 @@ The server will start on `http://localhost:5001` (or port specified by `PORT` en
 
 ### Option 2: Run with Docker (Recommended for Deployment)
 
+#### Quick Start with Docker Compose
+
+1. Navigate to the project directory:
+```bash
+cd SocialMediaApp
+```
+
+2. Start the containers:
+```bash
+docker-compose up -d
+```
+
+3. Check container status:
+```bash
+docker-compose ps
+```
+
+4. Verify the API is working:
+```bash
+curl http://localhost:5001/api/health
+```
+
 #### Using Docker Compose (Easiest)
 
 ```bash

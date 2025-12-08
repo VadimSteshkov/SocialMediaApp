@@ -1,0 +1,22 @@
+version: '3.8'
+
+# Development override file
+# Use with: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+services:
+  db:
+    environment:
+      POSTGRES_DB: ${DB_NAME:-social_media_dev}
+      POSTGRES_USER: ${DB_USER:-dev_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-dev_password}
+    ports:
+      - "5432:5432"  # Expose PostgreSQL port for local development tools
+
+  api:
+    environment:
+      - DB_NAME=${DB_NAME:-social_media_dev}
+      - DB_USER=${DB_USER:-dev_user}
+      - DB_PASSWORD=${DB_PASSWORD:-dev_password}
+    volumes:
+      - .:/app  # Mount source code for development (hot reload if needed)
+

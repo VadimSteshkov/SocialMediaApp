@@ -31,7 +31,9 @@ app.add_middleware(
 # Initialize database
 def get_db():
     """Get database instance. Allows override for testing."""
-    return Database(db_path=os.getenv('DB_PATH', 'social_media.db'))
+    # Database will automatically detect PostgreSQL if DB_HOST is set,
+    # otherwise falls back to SQLite
+    return Database()
 
 db = get_db()
 

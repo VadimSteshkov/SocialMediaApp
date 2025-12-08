@@ -143,12 +143,17 @@ celerybeat.pid
 # Environments
 .env
 .envrc
+.env.prod
 .venv
 env/
 venv/
 ENV/
 env.bak/
 venv.bak/
+
+# Allow example and dev env files (dev contains non-sensitive development credentials)
+!.env.example
+!.env.dev
 
 # Spyder project settings
 .spyderproject
