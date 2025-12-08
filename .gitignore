@@ -151,9 +151,9 @@ ENV/
 env.bak/
 venv.bak/
 
-# Allow example env file (template only)
+# Allow example and dev env files (dev contains non-sensitive development credentials)
 !.env.example
-# .env.dev should not be committed (contains dev credentials)
+!.env.dev
 
 # Spyder project settings
 .spyderproject
