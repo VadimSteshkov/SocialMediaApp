@@ -1,13 +1,23 @@
 """
 Database module for social media posts.
 Handles database initialization and operations for storing posts.
+Supports both SQLite and PostgreSQL databases.
 """
+import os
 import sqlite3
 from datetime import datetime
 from typing import Optional, List, Tuple
 
+# Optional PostgreSQL support
+try:
+    import psycopg2
+    PSYCOPG2_AVAILABLE = True
+except ImportError:
+    PSYCOPG2_AVAILABLE = False
+    psycopg2 = None
 
-# Register datetime adapter for Python 3.12+ compatibility
+
+# Register datetime adapter for Python 3.12+ compatibility (SQLite only)
 def adapt_datetime_iso(val):
     """Adapt datetime to ISO format string."""
     return val.isoformat()
@@ -20,30 +30,182 @@ def convert_datetime(val):
     return datetime.fromisoformat(val)
 
 
-# Register the adapter and converter
+# Register the adapter and converter for SQLite
 sqlite3.register_adapter(datetime, adapt_datetime_iso)
 sqlite3.register_converter("timestamp", convert_datetime)
 
 
 class Database:
-    """Database handler for social media posts."""
+    """Database handler for social media posts. Supports SQLite and PostgreSQL."""
     
-    def __init__(self, db_path: str = "social_media.db"):
+    def __init__(self, db_path: str = None):
         """
         Initialize the database connection.
         
         Args:
-            db_path: Path to the SQLite database file
+            db_path: Path to SQLite database file (if using SQLite).
+                    If None, will use PostgreSQL if DB_HOST is set, otherwise SQLite.
         """
-        self.db_path = db_path
+        # Determine database type from environment variables
+        self.db_type = os.getenv('DB_TYPE', 'sqlite').lower()
+        self.db_host = os.getenv('DB_HOST')
+        self.db_port = os.getenv('DB_PORT', '5432')
+        self.db_name = os.getenv('DB_NAME', 'social_media')
+        self.db_user = os.getenv('DB_USER', 'postgres')
+        self.db_password = os.getenv('DB_PASSWORD', 'postgres')
+        
+        # If DB_HOST is set, use PostgreSQL (if available)
+        if self.db_host:
+            if PSYCOPG2_AVAILABLE:
+                self.db_type = 'postgresql'
+            else:
+                raise ImportError("PostgreSQL support requires psycopg2. Install it with: pip install psycopg2-binary")
+        
+        if self.db_type == 'postgresql':
+            self.db_path = None
+            self._init_postgres_connection()
+        else:
+            # SQLite fallback
+            self.db_path = db_path or os.getenv('DB_PATH', 'social_media.db')
+            self._init_sqlite_connection()
+        
         self.init_database()
+    
+    def _init_postgres_connection(self):
+        """Initialize PostgreSQL connection parameters."""
+        self.conn_params = {
+            'host': self.db_host,
+            'port': self.db_port,
+            'database': self.db_name,
+            'user': self.db_user,
+            'password': self.db_password
+        }
+    
+    def _init_sqlite_connection(self):
+        """Initialize SQLite connection (no-op, connection created per operation)."""
+        pass
+    
+    def _get_connection(self):
+        """Get a database connection based on the database type."""
+        if self.db_type == 'postgresql':
+            if not PSYCOPG2_AVAILABLE:
+                raise ImportError("PostgreSQL support requires psycopg2. Install it with: pip install psycopg2-binary")
+            return psycopg2.connect(**self.conn_params)
+        else:
+            return sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES, timeout=10.0)
+    
+    def _execute(self, query: str, params: tuple = None, fetch: bool = False):
+        """
+        Execute a query and return results if needed.
+        
+        Args:
+            query: SQL query string
+            params: Query parameters
+            fetch: Whether to fetch results
+            
+        Returns:
+            Query results if fetch=True, otherwise None
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            if params:
+                cursor.execute(query, params)
+            else:
+                cursor.execute(query)
+            
+            if fetch:
+                results = cursor.fetchall()
+                conn.commit()
+                return results
+            else:
+                conn.commit()
+                return cursor.lastrowid if hasattr(cursor, 'lastrowid') else None
+        except Exception as e:
+            conn.rollback()
+            raise e
+        finally:
+            cursor.close()
+            conn.close()
     
     def init_database(self):
         """Create the posts table and related tables if they don't exist."""
-        conn = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES, timeout=10.0)
+        conn = self._get_connection()
         cursor = conn.cursor()
         
-        # Posts table
+        try:
+            if self.db_type == 'postgresql':
+                # PostgreSQL table definitions
+                # Posts table
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS posts (
+                        id SERIAL PRIMARY KEY,
+                        image TEXT NOT NULL,
+                        text TEXT NOT NULL,
+                        "user" TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
+                # User last post time table
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS user_last_post (
+                        "user" TEXT PRIMARY KEY,
+                        last_post_time TIMESTAMP NOT NULL
+                    )
+                """)
+                
+                # Likes table
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS likes (
+                        id SERIAL PRIMARY KEY,
+                        post_id INTEGER NOT NULL,
+                        "user" TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(post_id, "user"),
+                        FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE
+                    )
+                """)
+                
+                # Comments table
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS comments (
+                        id SERIAL PRIMARY KEY,
+                        post_id INTEGER NOT NULL,
+                        "user" TEXT NOT NULL,
+                        text TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE
+                    )
+                """)
+                
+                # Tags table
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS tags (
+                        id SERIAL PRIMARY KEY,
+                        name TEXT NOT NULL UNIQUE
+                    )
+                """)
+                
+                # Post tags junction table
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS post_tags (
+                        post_id INTEGER NOT NULL,
+                        tag_id INTEGER NOT NULL,
+                        PRIMARY KEY (post_id, tag_id),
+                        FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE,
+                        FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
+                    )
+                """)
+                
+                # Create indexes
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_likes_post_id ON likes(post_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_comments_post_id ON comments(post_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_post_tags_post_id ON post_tags(post_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_post_tags_tag_id ON post_tags(tag_id)")
+            else:
+                # SQLite table definitions
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS posts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -53,71 +215,66 @@ class Database:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        
-        # User last post time table (for timer functionality)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS user_last_post (
-                user TEXT PRIMARY KEY,
-                last_post_time TIMESTAMP NOT NULL
-            )
-        """)
-        
-        # Likes table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS likes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                post_id INTEGER NOT NULL,
-                user TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(post_id, user),
-                FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE
-            )
-        """)
-        
-        # Comments table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS comments (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                post_id INTEGER NOT NULL,
-                user TEXT NOT NULL,
-                text TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE
-            )
-        """)
-        
-        # Tags table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS tags (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL UNIQUE
-            )
-        """)
-        
-        # Post tags junction table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS post_tags (
-                post_id INTEGER NOT NULL,
-                tag_id INTEGER NOT NULL,
-                PRIMARY KEY (post_id, tag_id),
-                FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE,
-                FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
-            )
-        """)
-        
-        # Create indexes for better performance
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_likes_post_id ON likes(post_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_comments_post_id ON comments(post_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_post_tags_post_id ON post_tags(post_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_post_tags_tag_id ON post_tags(tag_id)")
+                
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS user_last_post (
+                        user TEXT PRIMARY KEY,
+                        last_post_time TIMESTAMP NOT NULL
+                    )
+                """)
+                
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS likes (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        post_id INTEGER NOT NULL,
+                        user TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(post_id, user),
+                        FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE
+                    )
+                """)
+                
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS comments (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        post_id INTEGER NOT NULL,
+                        user TEXT NOT NULL,
+                        text TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE
+                    )
+                """)
+                
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS tags (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name TEXT NOT NULL UNIQUE
+                    )
+                """)
+                
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS post_tags (
+                        post_id INTEGER NOT NULL,
+                        tag_id INTEGER NOT NULL,
+                        PRIMARY KEY (post_id, tag_id),
+                        FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE,
+                        FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
+                    )
+                """)
+                
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_likes_post_id ON likes(post_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_comments_post_id ON comments(post_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_post_tags_post_id ON post_tags(post_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_post_tags_tag_id ON post_tags(tag_id)")
         
         conn.commit()
+        finally:
+            cursor.close()
         conn.close()
     
     def insert_post(self, image: str, text: str, user: str) -> int:
         """
         Insert a new post into the database.
-        If the database is empty, resets the ID counter to start from 1.
         Also updates the user's last post time.
         
         Args:
@@ -128,37 +285,49 @@ class Database:
         Returns:
             The ID of the inserted post
         """
-        conn = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES, timeout=10.0)
+        conn = self._get_connection()
         cursor = conn.cursor()
         
         try:
-            # Check if database is empty and reset ID counter if needed
-            cursor.execute("SELECT COUNT(*) FROM posts")
-            count = cursor.fetchone()[0]
-            if count == 0:
-                # Reset AUTOINCREMENT counter when database is empty
-                cursor.execute("DELETE FROM sqlite_sequence WHERE name='posts'")
+            if self.db_type == 'postgresql':
+                cursor.execute("""
+                    INSERT INTO posts (image, text, "user", created_at)
+                    VALUES (%s, %s, %s, %s)
+                    RETURNING id
+                """, (image, text, user, datetime.now()))
+                post_id = cursor.fetchone()[0]
+                
+                cursor.execute("""
+                    INSERT INTO user_last_post ("user", last_post_time)
+                    VALUES (%s, %s)
+                    ON CONFLICT ("user") DO UPDATE SET last_post_time = EXCLUDED.last_post_time
+                """, (user, datetime.now()))
+            else:
+                # SQLite
+        cursor.execute("SELECT COUNT(*) FROM posts")
+        count = cursor.fetchone()[0]
+        if count == 0:
+            cursor.execute("DELETE FROM sqlite_sequence WHERE name='posts'")
+        
+        cursor.execute("""
+            INSERT INTO posts (image, text, user, created_at)
+            VALUES (?, ?, ?, ?)
+        """, (image, text, user, datetime.now()))
+        post_id = cursor.lastrowid
+                
+                cursor.execute("""
+                    INSERT OR REPLACE INTO user_last_post (user, last_post_time)
+                    VALUES (?, ?)
+                """, (user, datetime.now()))
             
-            cursor.execute("""
-                INSERT INTO posts (image, text, user, created_at)
-                VALUES (?, ?, ?, ?)
-            """, (image, text, user, datetime.now()))
-            
-            post_id = cursor.lastrowid
-            
-            # Update user's last post time in the same transaction
-            cursor.execute("""
-                INSERT OR REPLACE INTO user_last_post (user, last_post_time)
-                VALUES (?, ?)
-            """, (user, datetime.now()))
-            
-            conn.commit()
+        conn.commit()
             return post_id
         except Exception as e:
             conn.rollback()
             raise e
         finally:
-            conn.close()
+            cursor.close()
+        conn.close()
     
     def get_latest_post(self) -> Optional[Tuple[int, str, str, str, str]]:
         """
@@ -167,17 +336,27 @@ class Database:
         Returns:
             Tuple of (id, image, text, user, created_at) or None if no posts exist
         """
-        conn = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+        conn = self._get_connection()
         cursor = conn.cursor()
         
-        cursor.execute("""
+        if self.db_type == 'postgresql':
+            query = """
+                SELECT id, image, text, "user", created_at
+                FROM posts
+                ORDER BY created_at DESC
+                LIMIT 1
+            """
+        else:
+            query = """
             SELECT id, image, text, user, created_at
             FROM posts
             ORDER BY created_at DESC
             LIMIT 1
-        """)
+            """
         
+        cursor.execute(query)
         result = cursor.fetchone()
+        cursor.close()
         conn.close()
         
         return result
@@ -189,16 +368,25 @@ class Database:
         Returns:
             List of tuples containing (id, image, text, user, created_at)
         """
-        conn = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+        conn = self._get_connection()
         cursor = conn.cursor()
         
-        cursor.execute("""
+        if self.db_type == 'postgresql':
+            query = """
+                SELECT id, image, text, "user", created_at
+                FROM posts
+                ORDER BY created_at DESC
+            """
+        else:
+            query = """
             SELECT id, image, text, user, created_at
             FROM posts
             ORDER BY created_at DESC
-        """)
+            """
         
+        cursor.execute(query)
         results = cursor.fetchall()
+        cursor.close()
         conn.close()
         
         return results
@@ -213,9 +401,16 @@ class Database:
         Returns:
             Tuple of (id, image, text, user, created_at) or None if not found
         """
-        conn = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+        conn = self._get_connection()
         cursor = conn.cursor()
         
+        if self.db_type == 'postgresql':
+            cursor.execute("""
+                SELECT id, image, text, "user", created_at
+                FROM posts
+                WHERE id = %s
+            """, (post_id,))
+        else:
         cursor.execute("""
             SELECT id, image, text, user, created_at
             FROM posts
@@ -223,6 +418,7 @@ class Database:
         """, (post_id,))
         
         result = cursor.fetchone()
+        cursor.close()
         conn.close()
         
         return result
@@ -237,9 +433,17 @@ class Database:
         Returns:
             List of tuples containing (id, image, text, user, created_at)
         """
-        conn = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+        conn = self._get_connection()
         cursor = conn.cursor()
         
+        if self.db_type == 'postgresql':
+            cursor.execute("""
+                SELECT id, image, text, "user", created_at
+                FROM posts
+                WHERE "user" = %s
+                ORDER BY created_at DESC
+            """, (user,))
+        else:
         cursor.execute("""
             SELECT id, image, text, user, created_at
             FROM posts
@@ -248,6 +452,7 @@ class Database:
         """, (user,))
         
         results = cursor.fetchall()
+        cursor.close()
         conn.close()
         
         return results
@@ -262,9 +467,17 @@ class Database:
         Returns:
             List of tuples containing (id, image, text, user, created_at)
         """
-        conn = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+        conn = self._get_connection()
         cursor = conn.cursor()
         
+        if self.db_type == 'postgresql':
+            cursor.execute("""
+                SELECT id, image, text, "user", created_at
+                FROM posts
+                WHERE text ILIKE %s
+                ORDER BY created_at DESC
+            """, (f'%{text_query}%',))
+        else:
         cursor.execute("""
             SELECT id, image, text, user, created_at
             FROM posts
@@ -273,21 +486,27 @@ class Database:
         """, (f'%{text_query}%',))
         
         results = cursor.fetchall()
+        cursor.close()
         conn.close()
         
         return results
     
     def delete_all_posts(self):
         """Delete all posts from the database and reset the ID counter (useful for testing)."""
-        conn = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+        conn = self._get_connection()
         cursor = conn.cursor()
         
+        try:
         cursor.execute("DELETE FROM posts")
-        # Reset the AUTOINCREMENT counter
+            
+            if self.db_type == 'sqlite':
         cursor.execute("DELETE FROM sqlite_sequence WHERE name='posts'")
-        
-        conn.commit()
-        conn.close()
+            # PostgreSQL doesn't need sequence reset for SERIAL
+            
+            conn.commit()
+        finally:
+            cursor.close()
+            conn.close()
     
     def get_user_last_post_time(self, user: str) -> Optional[datetime]:
         """
@@ -299,14 +518,20 @@ class Database:
         Returns:
             Last post time or None if user hasn't posted yet
         """
-        conn = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+        conn = self._get_connection()
         cursor = conn.cursor()
         
-        cursor.execute("""
-            SELECT last_post_time FROM user_last_post WHERE user = ?
-        """, (user,))
+        if self.db_type == 'postgresql':
+            cursor.execute("""
+                SELECT last_post_time FROM user_last_post WHERE "user" = %s
+            """, (user,))
+        else:
+            cursor.execute("""
+                SELECT last_post_time FROM user_last_post WHERE user = ?
+            """, (user,))
         
         result = cursor.fetchone()
+        cursor.close()
         conn.close()
         
         return result[0] if result else None
@@ -320,7 +545,6 @@ class Database:
         Args:
             user: Username
         """
-        # This is now handled in insert_post to avoid database locks
         pass
     
     def add_like(self, post_id: int, user: str) -> bool:
@@ -334,19 +558,32 @@ class Database:
         Returns:
             True if like was added, False if already liked
         """
-        conn = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+        conn = self._get_connection()
         cursor = conn.cursor()
         
         try:
-            cursor.execute("""
-                INSERT INTO likes (post_id, user, created_at)
-                VALUES (?, ?, ?)
-            """, (post_id, user, datetime.now()))
-            conn.commit()
-            conn.close()
-            return True
-        except sqlite3.IntegrityError:
+            if self.db_type == 'postgresql':
+                cursor.execute("""
+                    INSERT INTO likes (post_id, "user", created_at)
+                    VALUES (%s, %s, %s)
+                """, (post_id, user, datetime.now()))
+                conn.commit()
+                cursor.close()
+                conn.close()
+                return True
+            else:
+                cursor.execute("""
+                    INSERT INTO likes (post_id, user, created_at)
+                    VALUES (?, ?, ?)
+                """, (post_id, user, datetime.now()))
+                conn.commit()
+                cursor.close()
+                conn.close()
+                return True
+        except (psycopg2.IntegrityError, sqlite3.IntegrityError):
             # Already liked
+            conn.rollback()
+            cursor.close()
             conn.close()
             return False
     
@@ -358,14 +595,20 @@ class Database:
             post_id: ID of the post
             user: Username who unliked the post
         """
-        conn = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+        conn = self._get_connection()
         cursor = conn.cursor()
         
-        cursor.execute("""
-            DELETE FROM likes WHERE post_id = ? AND user = ?
-        """, (post_id, user))
+        if self.db_type == 'postgresql':
+            cursor.execute("""
+                DELETE FROM likes WHERE post_id = %s AND "user" = %s
+            """, (post_id, user))
+        else:
+            cursor.execute("""
+                DELETE FROM likes WHERE post_id = ? AND user = ?
+            """, (post_id, user))
         
         conn.commit()
+        cursor.close()
         conn.close()
     
     def get_like_count(self, post_id: int) -> int:
@@ -378,14 +621,20 @@ class Database:
         Returns:
             Number of likes
         """
-        conn = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+        conn = self._get_connection()
         cursor = conn.cursor()
         
-        cursor.execute("""
-            SELECT COUNT(*) FROM likes WHERE post_id = ?
-        """, (post_id,))
+        if self.db_type == 'postgresql':
+            cursor.execute("""
+                SELECT COUNT(*) FROM likes WHERE post_id = %s
+            """, (post_id,))
+        else:
+            cursor.execute("""
+                SELECT COUNT(*) FROM likes WHERE post_id = ?
+            """, (post_id,))
         
         count = cursor.fetchone()[0]
+        cursor.close()
         conn.close()
         
         return count
@@ -401,14 +650,20 @@ class Database:
         Returns:
             True if liked, False otherwise
         """
-        conn = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+        conn = self._get_connection()
         cursor = conn.cursor()
         
-        cursor.execute("""
-            SELECT COUNT(*) FROM likes WHERE post_id = ? AND user = ?
-        """, (post_id, user))
+        if self.db_type == 'postgresql':
+            cursor.execute("""
+                SELECT COUNT(*) FROM likes WHERE post_id = %s AND "user" = %s
+            """, (post_id, user))
+        else:
+            cursor.execute("""
+                SELECT COUNT(*) FROM likes WHERE post_id = ? AND user = ?
+            """, (post_id, user))
         
         count = cursor.fetchone()[0]
+        cursor.close()
         conn.close()
         
         return count > 0
@@ -425,16 +680,25 @@ class Database:
         Returns:
             ID of the created comment
         """
-        conn = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+        conn = self._get_connection()
         cursor = conn.cursor()
         
-        cursor.execute("""
-            INSERT INTO comments (post_id, user, text, created_at)
-            VALUES (?, ?, ?, ?)
-        """, (post_id, user, text, datetime.now()))
+        if self.db_type == 'postgresql':
+            cursor.execute("""
+                INSERT INTO comments (post_id, "user", text, created_at)
+                VALUES (%s, %s, %s, %s)
+                RETURNING id
+            """, (post_id, user, text, datetime.now()))
+            comment_id = cursor.fetchone()[0]
+        else:
+            cursor.execute("""
+                INSERT INTO comments (post_id, user, text, created_at)
+                VALUES (?, ?, ?, ?)
+            """, (post_id, user, text, datetime.now()))
+            comment_id = cursor.lastrowid
         
-        comment_id = cursor.lastrowid
         conn.commit()
+        cursor.close()
         conn.close()
         
         return comment_id
@@ -449,17 +713,26 @@ class Database:
         Returns:
             List of tuples containing (id, user, text, created_at)
         """
-        conn = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+        conn = self._get_connection()
         cursor = conn.cursor()
         
-        cursor.execute("""
-            SELECT id, user, text, created_at
-            FROM comments
-            WHERE post_id = ?
-            ORDER BY created_at ASC
-        """, (post_id,))
+        if self.db_type == 'postgresql':
+            cursor.execute("""
+                SELECT id, "user", text, created_at
+                FROM comments
+                WHERE post_id = %s
+                ORDER BY created_at ASC
+            """, (post_id,))
+        else:
+            cursor.execute("""
+                SELECT id, user, text, created_at
+                FROM comments
+                WHERE post_id = ?
+                ORDER BY created_at ASC
+            """, (post_id,))
         
         results = cursor.fetchall()
+        cursor.close()
         conn.close()
         
         return results
@@ -474,21 +747,30 @@ class Database:
         Returns:
             Tag ID
         """
-        conn = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+        conn = self._get_connection()
         cursor = conn.cursor()
         
-        # Try to get existing tag
-        cursor.execute("SELECT id FROM tags WHERE name = ?", (tag_name.lower(),))
+        tag_normalized = tag_name.lower()
+        
+        if self.db_type == 'postgresql':
+            cursor.execute("SELECT id FROM tags WHERE name = %s", (tag_normalized,))
+        else:
+            cursor.execute("SELECT id FROM tags WHERE name = ?", (tag_normalized,))
+        
         result = cursor.fetchone()
         
         if result:
             tag_id = result[0]
         else:
-            # Create new tag
-            cursor.execute("INSERT INTO tags (name) VALUES (?)", (tag_name.lower(),))
-            tag_id = cursor.lastrowid
+            if self.db_type == 'postgresql':
+                cursor.execute("INSERT INTO tags (name) VALUES (%s) RETURNING id", (tag_normalized,))
+                tag_id = cursor.fetchone()[0]
+            else:
+                cursor.execute("INSERT INTO tags (name) VALUES (?)", (tag_normalized,))
+                tag_id = cursor.lastrowid
         
         conn.commit()
+        cursor.close()
         conn.close()
         
         return tag_id
@@ -504,7 +786,7 @@ class Database:
         if not tags:
             return
         
-        conn = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES, timeout=10.0)
+        conn = self._get_connection()
         cursor = conn.cursor()
         
         try:
@@ -514,23 +796,36 @@ class Database:
                     
                 tag_normalized = tag_name.strip().lower()
                 
-                # Get or create tag within the same connection
-                cursor.execute("SELECT id FROM tags WHERE name = ?", (tag_normalized,))
+                if self.db_type == 'postgresql':
+                    cursor.execute("SELECT id FROM tags WHERE name = %s", (tag_normalized,))
+                else:
+                    cursor.execute("SELECT id FROM tags WHERE name = ?", (tag_normalized,))
+                
                 result = cursor.fetchone()
                 
                 if result:
                     tag_id = result[0]
                 else:
-                    cursor.execute("INSERT INTO tags (name) VALUES (?)", (tag_normalized,))
-                    tag_id = cursor.lastrowid
+                    if self.db_type == 'postgresql':
+                        cursor.execute("INSERT INTO tags (name) VALUES (%s) RETURNING id", (tag_normalized,))
+                        tag_id = cursor.fetchone()[0]
+                    else:
+                        cursor.execute("INSERT INTO tags (name) VALUES (?)", (tag_normalized,))
+                        tag_id = cursor.lastrowid
                 
                 # Link tag to post
                 try:
-                    cursor.execute("""
-                        INSERT INTO post_tags (post_id, tag_id)
-                        VALUES (?, ?)
-                    """, (post_id, tag_id))
-                except sqlite3.IntegrityError:
+                    if self.db_type == 'postgresql':
+                        cursor.execute("""
+                            INSERT INTO post_tags (post_id, tag_id)
+                            VALUES (%s, %s)
+                        """, (post_id, tag_id))
+                    else:
+                        cursor.execute("""
+                            INSERT INTO post_tags (post_id, tag_id)
+                            VALUES (?, ?)
+                        """, (post_id, tag_id))
+                except (psycopg2.IntegrityError, sqlite3.IntegrityError):
                     # Tag already associated with post
                     pass
             
@@ -539,6 +834,7 @@ class Database:
             conn.rollback()
             raise e
         finally:
+            cursor.close()
             conn.close()
     
     def get_post_tags(self, post_id: int) -> List[str]:
@@ -551,20 +847,30 @@ class Database:
         Returns:
             List of tag names
         """
-        conn = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+        conn = self._get_connection()
         cursor = conn.cursor()
         
-        cursor.execute("""
-            SELECT t.name
-            FROM tags t
-            JOIN post_tags pt ON t.id = pt.tag_id
-            WHERE pt.post_id = ?
-            ORDER BY t.name
-        """, (post_id,))
+        if self.db_type == 'postgresql':
+            cursor.execute("""
+                SELECT t.name
+                FROM tags t
+                JOIN post_tags pt ON t.id = pt.tag_id
+                WHERE pt.post_id = %s
+                ORDER BY t.name
+            """, (post_id,))
+        else:
+            cursor.execute("""
+                SELECT t.name
+                FROM tags t
+                JOIN post_tags pt ON t.id = pt.tag_id
+                WHERE pt.post_id = ?
+                ORDER BY t.name
+            """, (post_id,))
         
         results = cursor.fetchall()
+        cursor.close()
         conn.close()
-        
+
         return [row[0] for row in results]
     
     def search_posts_by_tag(self, tag: str) -> List[Tuple[int, str, str, str, str]]:
@@ -577,23 +883,32 @@ class Database:
         Returns:
             List of tuples containing (id, image, text, user, created_at)
         """
-        conn = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+        conn = self._get_connection()
         cursor = conn.cursor()
         
-        # Normalize tag to lowercase (tags are stored in lowercase)
         tag_normalized = tag.strip().lower()
         
-        cursor.execute("""
-            SELECT DISTINCT p.id, p.image, p.text, p.user, p.created_at
-            FROM posts p
-            JOIN post_tags pt ON p.id = pt.post_id
-            JOIN tags t ON pt.tag_id = t.id
-            WHERE t.name = ?
-            ORDER BY p.created_at DESC
-        """, (tag_normalized,))
+        if self.db_type == 'postgresql':
+            cursor.execute("""
+                SELECT DISTINCT p.id, p.image, p.text, p."user", p.created_at
+                FROM posts p
+                JOIN post_tags pt ON p.id = pt.post_id
+                JOIN tags t ON pt.tag_id = t.id
+                WHERE t.name = %s
+                ORDER BY p.created_at DESC
+            """, (tag_normalized,))
+        else:
+            cursor.execute("""
+                SELECT DISTINCT p.id, p.image, p.text, p.user, p.created_at
+                FROM posts p
+                JOIN post_tags pt ON p.id = pt.post_id
+                JOIN tags t ON pt.tag_id = t.id
+                WHERE t.name = ?
+                ORDER BY p.created_at DESC
+            """, (tag_normalized,))
         
         results = cursor.fetchall()
+        cursor.close()
         conn.close()
         
         return results
-
