@@ -206,8 +206,8 @@ class Database:
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_post_tags_tag_id ON post_tags(tag_id)")
             else:
                 # SQLite table definitions
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS posts (
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS posts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 image TEXT NOT NULL,
                 text TEXT NOT NULL,
@@ -266,8 +266,11 @@ class Database:
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_comments_post_id ON comments(post_id)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_post_tags_post_id ON post_tags(post_id)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_post_tags_tag_id ON post_tags(tag_id)")
-        
-        conn.commit()
+            
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            raise e
         finally:
             cursor.close()
         conn.close()
@@ -304,23 +307,23 @@ class Database:
                 """, (user, datetime.now()))
             else:
                 # SQLite
-        cursor.execute("SELECT COUNT(*) FROM posts")
-        count = cursor.fetchone()[0]
-        if count == 0:
-            cursor.execute("DELETE FROM sqlite_sequence WHERE name='posts'")
-        
-        cursor.execute("""
-            INSERT INTO posts (image, text, user, created_at)
-            VALUES (?, ?, ?, ?)
-        """, (image, text, user, datetime.now()))
-        post_id = cursor.lastrowid
+                cursor.execute("SELECT COUNT(*) FROM posts")
+                count = cursor.fetchone()[0]
+                if count == 0:
+                    cursor.execute("DELETE FROM sqlite_sequence WHERE name='posts'")
+                
+                cursor.execute("""
+                    INSERT INTO posts (image, text, user, created_at)
+                    VALUES (?, ?, ?, ?)
+                """, (image, text, user, datetime.now()))
+                post_id = cursor.lastrowid
                 
                 cursor.execute("""
                     INSERT OR REPLACE INTO user_last_post (user, last_post_time)
                     VALUES (?, ?)
                 """, (user, datetime.now()))
             
-        conn.commit()
+            conn.commit()
             return post_id
         except Exception as e:
             conn.rollback()
@@ -411,11 +414,11 @@ class Database:
                 WHERE id = %s
             """, (post_id,))
         else:
-        cursor.execute("""
-            SELECT id, image, text, user, created_at
-            FROM posts
-            WHERE id = ?
-        """, (post_id,))
+            cursor.execute("""
+                SELECT id, image, text, user, created_at
+                FROM posts
+                WHERE id = ?
+            """, (post_id,))
         
         result = cursor.fetchone()
         cursor.close()
@@ -444,12 +447,12 @@ class Database:
                 ORDER BY created_at DESC
             """, (user,))
         else:
-        cursor.execute("""
-            SELECT id, image, text, user, created_at
-            FROM posts
-            WHERE user = ?
-            ORDER BY created_at DESC
-        """, (user,))
+            cursor.execute("""
+                SELECT id, image, text, user, created_at
+                FROM posts
+                WHERE user = ?
+                ORDER BY created_at DESC
+            """, (user,))
         
         results = cursor.fetchall()
         cursor.close()
@@ -478,12 +481,12 @@ class Database:
                 ORDER BY created_at DESC
             """, (f'%{text_query}%',))
         else:
-        cursor.execute("""
-            SELECT id, image, text, user, created_at
-            FROM posts
-            WHERE text LIKE ?
-            ORDER BY created_at DESC
-        """, (f'%{text_query}%',))
+            cursor.execute("""
+                SELECT id, image, text, user, created_at
+                FROM posts
+                WHERE text LIKE ?
+                ORDER BY created_at DESC
+            """, (f'%{text_query}%',))
         
         results = cursor.fetchall()
         cursor.close()
@@ -497,10 +500,10 @@ class Database:
         cursor = conn.cursor()
         
         try:
-        cursor.execute("DELETE FROM posts")
+            cursor.execute("DELETE FROM posts")
             
             if self.db_type == 'sqlite':
-        cursor.execute("DELETE FROM sqlite_sequence WHERE name='posts'")
+                cursor.execute("DELETE FROM sqlite_sequence WHERE name='posts'")
             # PostgreSQL doesn't need sequence reset for SERIAL
             
             conn.commit()
