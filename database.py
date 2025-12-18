@@ -142,10 +142,24 @@ class Database:
                     CREATE TABLE IF NOT EXISTS posts (
                         id SERIAL PRIMARY KEY,
                         image TEXT NOT NULL,
+                        image_thumbnail TEXT,
                         text TEXT NOT NULL,
                         "user" TEXT NOT NULL,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
+                """)
+                
+                # Add image_thumbnail column if it doesn't exist (for existing databases)
+                cursor.execute("""
+                    DO $$ 
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name='posts' AND column_name='image_thumbnail'
+                        ) THEN
+                            ALTER TABLE posts ADD COLUMN image_thumbnail TEXT;
+                        END IF;
+                    END $$;
                 """)
                 
                 # User last post time table
@@ -210,11 +224,22 @@ class Database:
                     CREATE TABLE IF NOT EXISTS posts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 image TEXT NOT NULL,
+                image_thumbnail TEXT,
                 text TEXT NOT NULL,
                 user TEXT NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+                
+                # Add image_thumbnail column if it doesn't exist (for existing databases)
+                cursor.execute("""
+                    PRAGMA table_info(posts)
+                """)
+                columns = [row[1] for row in cursor.fetchall()]
+                if 'image_thumbnail' not in columns:
+                    cursor.execute("""
+                        ALTER TABLE posts ADD COLUMN image_thumbnail TEXT
+                    """)
                 
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS user_last_post (
@@ -275,7 +300,7 @@ class Database:
             cursor.close()
         conn.close()
     
-    def insert_post(self, image: str, text: str, user: str) -> int:
+    def insert_post(self, image: str, text: str, user: str, image_thumbnail: Optional[str] = None) -> int:
         """
         Insert a new post into the database.
         Also updates the user's last post time.
@@ -284,6 +309,7 @@ class Database:
             image: Path or URL to the image
             text: Post text/comment
             user: Username of the post author
+            image_thumbnail: Optional path or URL to the thumbnail image
             
         Returns:
             The ID of the inserted post
@@ -294,10 +320,10 @@ class Database:
         try:
             if self.db_type == 'postgresql':
                 cursor.execute("""
-                    INSERT INTO posts (image, text, "user", created_at)
-                    VALUES (%s, %s, %s, %s)
+                    INSERT INTO posts (image, image_thumbnail, text, "user", created_at)
+                    VALUES (%s, %s, %s, %s, %s)
                     RETURNING id
-                """, (image, text, user, datetime.now()))
+                """, (image, image_thumbnail, text, user, datetime.now()))
                 post_id = cursor.fetchone()[0]
                 
                 cursor.execute("""
@@ -313,9 +339,9 @@ class Database:
                     cursor.execute("DELETE FROM sqlite_sequence WHERE name='posts'")
                 
                 cursor.execute("""
-                    INSERT INTO posts (image, text, user, created_at)
-                    VALUES (?, ?, ?, ?)
-                """, (image, text, user, datetime.now()))
+                    INSERT INTO posts (image, image_thumbnail, text, user, created_at)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (image, image_thumbnail, text, user, datetime.now()))
                 post_id = cursor.lastrowid
                 
                 cursor.execute("""
@@ -332,26 +358,55 @@ class Database:
             cursor.close()
         conn.close()
     
-    def get_latest_post(self) -> Optional[Tuple[int, str, str, str, str]]:
+    def update_post_thumbnail(self, post_id: int, image_thumbnail: str):
+        """
+        Update the thumbnail image for a post.
+        
+        Args:
+            post_id: The ID of the post
+            image_thumbnail: Path or URL to the thumbnail image
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            if self.db_type == 'postgresql':
+                cursor.execute("""
+                    UPDATE posts SET image_thumbnail = %s WHERE id = %s
+                """, (image_thumbnail, post_id))
+            else:
+                cursor.execute("""
+                    UPDATE posts SET image_thumbnail = ? WHERE id = ?
+                """, (image_thumbnail, post_id))
+            
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            raise e
+        finally:
+            cursor.close()
+            conn.close()
+    
+    def get_latest_post(self) -> Optional[Tuple[int, str, Optional[str], str, str, str]]:
         """
         Retrieve the latest post from the database.
         
         Returns:
-            Tuple of (id, image, text, user, created_at) or None if no posts exist
+            Tuple of (id, image, image_thumbnail, text, user, created_at) or None if no posts exist
         """
         conn = self._get_connection()
         cursor = conn.cursor()
         
         if self.db_type == 'postgresql':
             query = """
-                SELECT id, image, text, "user", created_at
+                SELECT id, image, image_thumbnail, text, "user", created_at
                 FROM posts
                 ORDER BY created_at DESC
                 LIMIT 1
             """
         else:
             query = """
-            SELECT id, image, text, user, created_at
+            SELECT id, image, image_thumbnail, text, user, created_at
             FROM posts
             ORDER BY created_at DESC
             LIMIT 1
@@ -364,25 +419,25 @@ class Database:
         
         return result
     
-    def get_all_posts(self) -> List[Tuple[int, str, str, str, str]]:
+    def get_all_posts(self) -> List[Tuple[int, str, Optional[str], str, str, str]]:
         """
         Retrieve all posts from the database.
         
         Returns:
-            List of tuples containing (id, image, text, user, created_at)
+            List of tuples containing (id, image, image_thumbnail, text, user, created_at)
         """
         conn = self._get_connection()
         cursor = conn.cursor()
         
         if self.db_type == 'postgresql':
             query = """
-                SELECT id, image, text, "user", created_at
+                SELECT id, image, image_thumbnail, text, "user", created_at
                 FROM posts
                 ORDER BY created_at DESC
             """
         else:
             query = """
-            SELECT id, image, text, user, created_at
+            SELECT id, image, image_thumbnail, text, user, created_at
             FROM posts
             ORDER BY created_at DESC
             """
@@ -394,7 +449,7 @@ class Database:
         
         return results
     
-    def get_post_by_id(self, post_id: int) -> Optional[Tuple[int, str, str, str, str]]:
+    def get_post_by_id(self, post_id: int) -> Optional[Tuple[int, str, Optional[str], str, str, str]]:
         """
         Retrieve a post by its ID.
         
@@ -402,20 +457,20 @@ class Database:
             post_id: The ID of the post to retrieve
             
         Returns:
-            Tuple of (id, image, text, user, created_at) or None if not found
+            Tuple of (id, image, image_thumbnail, text, user, created_at) or None if not found
         """
         conn = self._get_connection()
         cursor = conn.cursor()
         
         if self.db_type == 'postgresql':
             cursor.execute("""
-                SELECT id, image, text, "user", created_at
+                SELECT id, image, image_thumbnail, text, "user", created_at
                 FROM posts
                 WHERE id = %s
             """, (post_id,))
         else:
             cursor.execute("""
-                SELECT id, image, text, user, created_at
+                SELECT id, image, image_thumbnail, text, user, created_at
                 FROM posts
                 WHERE id = ?
             """, (post_id,))
@@ -426,7 +481,7 @@ class Database:
         
         return result
     
-    def search_posts_by_user(self, user: str) -> List[Tuple[int, str, str, str, str]]:
+    def search_posts_by_user(self, user: str) -> List[Tuple[int, str, Optional[str], str, str, str]]:
         """
         Search for posts by username.
         
@@ -434,21 +489,21 @@ class Database:
             user: Username to search for
             
         Returns:
-            List of tuples containing (id, image, text, user, created_at)
+            List of tuples containing (id, image, image_thumbnail, text, user, created_at)
         """
         conn = self._get_connection()
         cursor = conn.cursor()
         
         if self.db_type == 'postgresql':
             cursor.execute("""
-                SELECT id, image, text, "user", created_at
+                SELECT id, image, image_thumbnail, text, "user", created_at
                 FROM posts
                 WHERE "user" = %s
                 ORDER BY created_at DESC
             """, (user,))
         else:
             cursor.execute("""
-                SELECT id, image, text, user, created_at
+                SELECT id, image, image_thumbnail, text, user, created_at
                 FROM posts
                 WHERE user = ?
                 ORDER BY created_at DESC
@@ -460,7 +515,7 @@ class Database:
         
         return results
     
-    def search_posts_by_text(self, text_query: str) -> List[Tuple[int, str, str, str, str]]:
+    def search_posts_by_text(self, text_query: str) -> List[Tuple[int, str, Optional[str], str, str, str]]:
         """
         Search for posts by text content (case-insensitive partial match).
         
@@ -468,21 +523,21 @@ class Database:
             text_query: Text to search for in post content
             
         Returns:
-            List of tuples containing (id, image, text, user, created_at)
+            List of tuples containing (id, image, image_thumbnail, text, user, created_at)
         """
         conn = self._get_connection()
         cursor = conn.cursor()
         
         if self.db_type == 'postgresql':
             cursor.execute("""
-                SELECT id, image, text, "user", created_at
+                SELECT id, image, image_thumbnail, text, "user", created_at
                 FROM posts
                 WHERE text ILIKE %s
                 ORDER BY created_at DESC
             """, (f'%{text_query}%',))
         else:
             cursor.execute("""
-                SELECT id, image, text, user, created_at
+                SELECT id, image, image_thumbnail, text, user, created_at
                 FROM posts
                 WHERE text LIKE ?
                 ORDER BY created_at DESC
@@ -876,7 +931,7 @@ class Database:
 
         return [row[0] for row in results]
     
-    def search_posts_by_tag(self, tag: str) -> List[Tuple[int, str, str, str, str]]:
+    def search_posts_by_tag(self, tag: str) -> List[Tuple[int, str, Optional[str], str, str, str]]:
         """
         Search for posts by tag.
         
@@ -884,7 +939,7 @@ class Database:
             tag: Tag name to search for
             
         Returns:
-            List of tuples containing (id, image, text, user, created_at)
+            List of tuples containing (id, image, image_thumbnail, text, user, created_at)
         """
         conn = self._get_connection()
         cursor = conn.cursor()
@@ -893,7 +948,7 @@ class Database:
         
         if self.db_type == 'postgresql':
             cursor.execute("""
-                SELECT DISTINCT p.id, p.image, p.text, p."user", p.created_at
+                SELECT DISTINCT p.id, p.image, p.image_thumbnail, p.text, p."user", p.created_at
                 FROM posts p
                 JOIN post_tags pt ON p.id = pt.post_id
                 JOIN tags t ON pt.tag_id = t.id
@@ -902,7 +957,7 @@ class Database:
             """, (tag_normalized,))
         else:
             cursor.execute("""
-                SELECT DISTINCT p.id, p.image, p.text, p.user, p.created_at
+                SELECT DISTINCT p.id, p.image, p.image_thumbnail, p.text, p.user, p.created_at
                 FROM posts p
                 JOIN post_tags pt ON p.id = pt.post_id
                 JOIN tags t ON pt.tag_id = t.id

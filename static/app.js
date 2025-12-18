@@ -113,22 +113,55 @@ async function submitPost(event) {
     const user = document.getElementById('user').value;
     const text = document.getElementById('text').value;
     const tags = extractHashtags(text);
+    const imageInput = document.getElementById('image');
+    const imageFileInput = document.getElementById('imageFile');
     
-    const formData = {
-        user: user,
-        text: text,
-        image: document.getElementById('image').value,
-        tags: tags
-    };
+    // Check if file is uploaded or URL is provided
+    const hasFile = imageFileInput && imageFileInput.files && imageFileInput.files.length > 0;
+    const hasUrl = imageInput && imageInput.value.trim();
+    
+    if (!hasFile && !hasUrl) {
+        messageDiv.className = 'message error';
+        messageDiv.textContent = 'Please upload an image file or provide an image URL';
+        messageDiv.style.display = 'block';
+        messageDiv.style.opacity = '1';
+        return;
+    }
     
     try {
-        const response = await fetch(`${API_BASE_URL}/posts`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(formData)
-        });
+        let response;
+        
+        if (hasFile) {
+            // Upload file using multipart form data
+            const formData = new FormData();
+            formData.append('file', imageFileInput.files[0]);
+            formData.append('text', text);
+            formData.append('user', user);
+            if (tags.length > 0) {
+                formData.append('tags', tags.join(','));
+            }
+            
+            response = await fetch(`${API_BASE_URL}/posts/upload`, {
+                method: 'POST',
+                body: formData
+            });
+        } else {
+            // Use URL endpoint (existing functionality)
+            const formData = {
+                user: user,
+                text: text,
+                image: imageInput.value,
+                tags: tags
+            };
+            
+            response = await fetch(`${API_BASE_URL}/posts`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(formData)
+            });
+        }
         
         const data = await response.json();
         
@@ -137,7 +170,24 @@ async function submitPost(event) {
             messageDiv.textContent = `Post created successfully. Post ID: ${data.id}`;
             messageDiv.style.display = 'block';
             messageDiv.style.opacity = '1';
+            
+            // Reset form
             document.getElementById('postForm').reset();
+            
+            // Reset file upload preview
+            const uploadContent = document.getElementById('fileUploadContent');
+            const uploadPreview = document.getElementById('fileUploadPreview');
+            const fileInput = document.getElementById('imageFile');
+            const urlInput = document.getElementById('image');
+            const fileUploadUrl = document.getElementById('fileUploadUrl');
+            
+            if (uploadContent && uploadPreview) {
+                uploadContent.style.display = 'flex';
+                uploadPreview.style.display = 'none';
+            }
+            if (fileInput) fileInput.value = '';
+            if (urlInput) urlInput.value = '';
+            if (fileUploadUrl) fileUploadUrl.style.display = 'none';
             
             // Restart timer check
             startTimerCheck(user);
@@ -357,6 +407,19 @@ function createPostCard(post, currentUser = '') {
     
     const commentIconSvg = '<svg class="comment-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>';
     
+    // Use thumbnail if available, otherwise use full image
+    const imageUrl = post.image_thumbnail || post.image;
+    const fullImageUrl = post.image;
+    const hasThumbnail = post.image_thumbnail && post.image_thumbnail !== post.image;
+    
+    // Image HTML with click handler for full-size view with comments
+    const imageHtml = `<div class="post-image-container">
+        <img src="${escapeHtml(imageUrl)}" alt="Post image" class="post-image ${hasThumbnail ? 'post-image-thumbnail' : ''}" 
+             onclick="showFullImageWithComments(${post.id}, '${escapeHtml(fullImageUrl)}', '${escapeHtml(post.user)}', '${escapeHtml(removeHashtags(post.text).replace(/'/g, "\\'"))}', '${escapeHtml(currentUser)}')" 
+             onerror="this.style.display='none'"
+             style="cursor: pointer;">
+       </div>`;
+    
     return `
         <div class="post-card" data-post-id="${post.id}">
             <div class="post-header">
@@ -364,7 +427,7 @@ function createPostCard(post, currentUser = '') {
                 <span class="post-date">${formattedDate}</span>
             </div>
             <div class="post-text">${escapeHtml(removeHashtags(post.text))}</div>
-            <img src="${escapeHtml(post.image)}" alt="Post image" class="post-image" onerror="this.style.display='none'">
+            ${imageHtml}
             ${tagsHtml}
             <div class="post-actions">
                 <button class="like-btn ${likeClass}" data-post-id="${post.id}" data-user="${escapeHtml(currentUser)}">
@@ -556,6 +619,216 @@ function attachPostEventListeners() {
     });
 }
 
+// Show full-size image in modal
+function showFullImage(imageUrl) {
+    // Create modal overlay
+    const modal = document.createElement('div');
+    modal.className = 'image-modal';
+    modal.innerHTML = `
+        <div class="image-modal-content">
+            <span class="image-modal-close" onclick="this.parentElement.parentElement.remove()">&times;</span>
+            <img src="${escapeHtml(imageUrl)}" alt="Full size image" class="image-modal-image">
+        </div>
+    `;
+    
+    // Close on background click
+    modal.addEventListener('click', function(e) {
+        if (e.target === modal) {
+            modal.remove();
+        }
+    });
+    
+    // Close on Escape key
+    const closeHandler = function(e) {
+        if (e.key === 'Escape') {
+            modal.remove();
+            document.removeEventListener('keydown', closeHandler);
+        }
+    };
+    document.addEventListener('keydown', closeHandler);
+    
+    document.body.appendChild(modal);
+}
+
+// Show full-size image with comments in Instagram-like modal
+async function showFullImageWithComments(postId, imageUrl, postUser, postText, currentUser) {
+    // Create modal overlay
+    const modal = document.createElement('div');
+    modal.className = 'image-modal-instagram';
+    modal.id = `image-modal-${postId}`;
+    
+    // Load comments
+    let commentsHtml = '<div class="modal-comments-loading">Loading comments...</div>';
+    try {
+        const commentsResponse = await fetch(`${API_BASE_URL}/posts/${postId}/comments`);
+        const comments = await commentsResponse.json();
+        
+        if (comments.length === 0) {
+            commentsHtml = '<div class="modal-comments-empty">No comments yet. Be the first to comment!</div>';
+        } else {
+            commentsHtml = comments.map(comment => {
+                const date = new Date(comment.created_at);
+                const formattedDate = date.toLocaleString('en-US', {
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+                return `
+                    <div class="modal-comment">
+                        <div class="modal-comment-header">
+                            <span class="modal-comment-user">@${escapeHtml(comment.user)}</span>
+                            <span class="modal-comment-date">${formattedDate}</span>
+                        </div>
+                        <div class="modal-comment-text">${escapeHtml(comment.text)}</div>
+                    </div>
+                `;
+            }).join('');
+        }
+    } catch (error) {
+        commentsHtml = '<div class="modal-comments-error">Error loading comments</div>';
+    }
+    
+    // Get tags from stored post data or extract from text
+    const postData = window.currentPostData && window.currentPostData[postId];
+    let tags = [];
+    if (postData && postData.tags) {
+        tags = postData.tags;
+    } else {
+        // Try to extract from text
+        const hashtagMatches = postText.match(/#[\w\u0400-\u04FF]+/g);
+        if (hashtagMatches) {
+            tags = hashtagMatches.map(tag => tag.substring(1).toLowerCase());
+        }
+    }
+    const tagsHtml = tags && tags.length > 0 
+        ? `<div class="modal-tags">${tags.map(tag => `<span class="modal-tag">#${escapeHtml(tag)}</span>`).join('')}</div>`
+        : '';
+    
+    modal.innerHTML = `
+        <div class="image-modal-instagram-content">
+            <button class="image-modal-close-btn" onclick="document.getElementById('image-modal-${postId}').remove()">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+            </button>
+            <div class="modal-left">
+                <img src="${escapeHtml(imageUrl)}" alt="Full size image" class="modal-full-image">
+            </div>
+            <div class="modal-right">
+                <div class="modal-header">
+                    <span class="modal-username">@${escapeHtml(postUser)}</span>
+                </div>
+                <div class="modal-post-text">${escapeHtml(postText)}</div>
+                ${tagsHtml}
+                <div class="modal-comments-section">
+                    <div class="modal-comments-list" id="modal-comments-${postId}">
+                        ${commentsHtml}
+                    </div>
+                </div>
+                <div class="modal-add-comment">
+                    <input type="text" id="modal-comment-input-${postId}" placeholder="Add a comment..." class="modal-comment-input" data-post-id="${postId}" data-user="${escapeHtml(currentUser)}">
+                    <button class="modal-comment-submit" data-post-id="${postId}" data-user="${escapeHtml(currentUser)}">Post</button>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Close on background click
+    modal.addEventListener('click', function(e) {
+        if (e.target === modal) {
+            modal.remove();
+        }
+    });
+    
+    // Close on Escape key
+    const closeHandler = function(e) {
+        if (e.key === 'Escape') {
+            modal.remove();
+            document.removeEventListener('keydown', closeHandler);
+        }
+    };
+    document.addEventListener('keydown', closeHandler);
+    
+    // Add comment functionality
+    const commentInput = modal.querySelector(`#modal-comment-input-${postId}`);
+    const commentSubmit = modal.querySelector(`.modal-comment-submit[data-post-id="${postId}"]`);
+    const commentsList = modal.querySelector(`#modal-comments-${postId}`);
+    
+    const submitComment = async () => {
+        if (!currentUser) {
+            alert('Please enter your username first');
+            return;
+        }
+        
+        const text = commentInput.value.trim();
+        if (!text) return;
+        
+        try {
+            const response = await fetch(`${API_BASE_URL}/posts/${postId}/comments`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    user: currentUser,
+                    text: text
+                })
+            });
+            
+            if (response.ok) {
+                commentInput.value = '';
+                // Reload comments
+                const commentsResponse = await fetch(`${API_BASE_URL}/posts/${postId}/comments`);
+                const comments = await commentsResponse.json();
+                
+                if (comments.length === 0) {
+                    commentsList.innerHTML = '<div class="modal-comments-empty">No comments yet. Be the first to comment!</div>';
+                } else {
+                    commentsList.innerHTML = comments.map(comment => {
+                        const date = new Date(comment.created_at);
+                        const formattedDate = date.toLocaleString('en-US', {
+                            year: 'numeric',
+                            month: 'short',
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit'
+                        });
+                        return `
+                            <div class="modal-comment">
+                                <div class="modal-comment-header">
+                                    <span class="modal-comment-user">@${escapeHtml(comment.user)}</span>
+                                    <span class="modal-comment-date">${formattedDate}</span>
+                                </div>
+                                <div class="modal-comment-text">${escapeHtml(comment.text)}</div>
+                            </div>
+                        `;
+                    }).join('');
+                }
+            }
+        } catch (error) {
+            console.error('Error adding comment:', error);
+            alert('Failed to add comment');
+        }
+    };
+    
+    if (commentSubmit) {
+        commentSubmit.addEventListener('click', submitComment);
+    }
+    
+    if (commentInput) {
+        commentInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                submitComment();
+            }
+        });
+    }
+    
+    document.body.appendChild(modal);
+}
+
 // Escape HTML to prevent XSS
 function escapeHtml(text) {
     const div = document.createElement('div');
@@ -563,8 +836,198 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+// File upload drag and drop functionality
+function initFileUpload() {
+    const dropzone = document.getElementById('fileDropzone');
+    const fileInput = document.getElementById('imageFile');
+    const uploadContent = document.getElementById('fileUploadContent');
+    const uploadPreview = document.getElementById('fileUploadPreview');
+    const previewImage = document.getElementById('previewImage');
+    const previewFilename = document.getElementById('previewFilename');
+    const removeImageBtn = document.getElementById('removeImageBtn');
+    const urlToggleBtn = document.getElementById('urlToggleBtn');
+    const fileUploadUrl = document.getElementById('fileUploadUrl');
+    const urlInput = document.getElementById('image');
+    const urlRemoveBtn = document.getElementById('urlRemoveBtn');
+    
+    if (!dropzone || !fileInput) return;
+    
+    // Click to browse
+    dropzone.addEventListener('click', function(e) {
+        // Don't trigger if clicking on remove button, preview image, or URL elements
+        if (e.target !== removeImageBtn && 
+            !e.target.closest('.remove-image-btn') && 
+            e.target.tagName !== 'IMG' &&
+            !e.target.closest('.file-upload-preview') &&
+            !e.target.closest('.file-upload-url') &&
+            e.target !== urlToggleBtn &&
+            !e.target.closest('.url-toggle-btn')) {
+            fileInput.click();
+        }
+    });
+    
+    // Also make the browse text clickable
+    const browseText = dropzone.querySelector('.upload-browse');
+    if (browseText) {
+        browseText.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            fileInput.click();
+        });
+    }
+    
+    // File input change - Safari compatible
+    fileInput.addEventListener('change', function(e) {
+        const files = e.target.files || (e.dataTransfer && e.dataTransfer.files);
+        if (files && files.length > 0) {
+            handleFileSelect(files);
+        }
+    });
+    
+    // Safari fallback - if change event doesn't fire properly
+    fileInput.addEventListener('input', function(e) {
+        const files = e.target.files;
+        if (files && files.length > 0) {
+            handleFileSelect(files);
+        }
+    });
+    
+    // Drag and drop events (Safari compatible with better visual feedback)
+    let dragCounter = 0;
+    
+    dropzone.addEventListener('dragenter', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        dragCounter++;
+        // Safari fix - force repaint
+        dropzone.style.display = 'none';
+        dropzone.offsetHeight; // Trigger reflow
+        dropzone.style.display = '';
+        dropzone.classList.add('drag-over');
+    });
+    
+    dropzone.addEventListener('dragover', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        // Safari fix
+        if (e.dataTransfer) {
+            e.dataTransfer.dropEffect = 'copy';
+        }
+        // Keep drag-over class active
+        if (!dropzone.classList.contains('drag-over')) {
+            dropzone.classList.add('drag-over');
+        }
+    });
+    
+    dropzone.addEventListener('dragleave', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        dragCounter--;
+        // Only remove class if truly leaving the dropzone
+        if (dragCounter === 0) {
+            dropzone.classList.remove('drag-over');
+        }
+    });
+    
+    dropzone.addEventListener('drop', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        dragCounter = 0;
+        dropzone.classList.remove('drag-over');
+        
+        const files = e.dataTransfer ? e.dataTransfer.files : null;
+        if (files && files.length > 0) {
+            handleFileSelect(files);
+        }
+    });
+    
+    // Handle file selection
+    function handleFileSelect(files) {
+        const file = files[0];
+        if (!file) return;
+        
+        // Check if it's an image
+        if (!file.type.startsWith('image/')) {
+            alert('Please select an image file');
+            return;
+        }
+        
+        // Check file size (10MB max)
+        if (file.size > 10 * 1024 * 1024) {
+            alert('File size must be less than 10MB');
+            return;
+        }
+        
+        // Hide URL input if shown
+        fileUploadUrl.style.display = 'none';
+        urlInput.value = '';
+        
+        // Show preview
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            previewImage.src = e.target.result;
+            previewFilename.textContent = file.name;
+            uploadContent.style.display = 'none';
+            uploadPreview.style.display = 'block';
+        };
+        reader.readAsDataURL(file);
+        
+        // Set file input (Safari compatible)
+        try {
+            const dataTransfer = new DataTransfer();
+            dataTransfer.items.add(file);
+            fileInput.files = dataTransfer.files;
+        } catch (e) {
+            // Safari fallback - use FileList directly if DataTransfer not supported
+            // The file is already selected via the input change event
+            console.log('Using fallback file selection method');
+        }
+    }
+    
+    // Remove image
+    if (removeImageBtn) {
+        removeImageBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            fileInput.value = '';
+            uploadContent.style.display = 'flex';
+            uploadPreview.style.display = 'none';
+            previewImage.src = '';
+            previewFilename.textContent = '';
+        });
+    }
+    
+    // Toggle URL input
+    if (urlToggleBtn) {
+        urlToggleBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            if (fileUploadUrl.style.display === 'none') {
+                fileUploadUrl.style.display = 'flex';
+                // Clear file input
+                fileInput.value = '';
+                uploadContent.style.display = 'flex';
+                uploadPreview.style.display = 'none';
+            } else {
+                fileUploadUrl.style.display = 'none';
+                urlInput.value = '';
+            }
+        });
+    }
+    
+    // Remove URL
+    if (urlRemoveBtn) {
+        urlRemoveBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            urlInput.value = '';
+            fileUploadUrl.style.display = 'none';
+        });
+    }
+}
+
 // Load posts when page loads (if on list section)
 document.addEventListener('DOMContentLoaded', () => {
+    // Initialize file upload
+    initFileUpload();
+    
     // Check if we're on the list section
     const listSection = document.getElementById('list');
     if (listSection && listSection.classList.contains('active')) {

@@ -2,7 +2,7 @@
 FastAPI REST API for the social media app.
 Provides endpoints for creating, retrieving, and searching posts.
 """
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Form
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,6 +11,9 @@ from typing import Optional, List
 from database import Database
 from datetime import datetime, timedelta
 import os
+import uuid
+import shutil
+from pathlib import Path
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -37,6 +40,82 @@ def get_db():
 
 db = get_db()
 
+# File upload configuration
+UPLOAD_DIR = Path("uploads")
+UPLOAD_FULL_DIR = UPLOAD_DIR / "full"
+UPLOAD_THUMBNAIL_DIR = UPLOAD_DIR / "thumbnails"
+
+# Create upload directories if they don't exist
+UPLOAD_FULL_DIR.mkdir(parents=True, exist_ok=True)
+UPLOAD_THUMBNAIL_DIR.mkdir(parents=True, exist_ok=True)
+
+# Allowed image extensions
+ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+
+
+def is_allowed_file(filename: str) -> bool:
+    """Check if file extension is allowed."""
+    return Path(filename).suffix.lower() in ALLOWED_EXTENSIONS
+
+
+def send_image_to_queue(post_id: int, image_path: str):
+    """
+    Send image processing task to RabbitMQ message queue.
+    
+    Args:
+        post_id: ID of the post
+        image_path: Path to the full-size image file
+    """
+    try:
+        import pika
+        import json
+        
+        # Get RabbitMQ connection parameters from environment
+        rabbitmq_host = os.getenv('RABBITMQ_HOST', 'localhost')
+        rabbitmq_port = int(os.getenv('RABBITMQ_PORT', '5672'))
+        rabbitmq_user = os.getenv('RABBITMQ_USER', 'guest')
+        rabbitmq_password = os.getenv('RABBITMQ_PASSWORD', 'guest')
+        
+        # Queue name
+        queue_name = 'image_resize_queue'
+        
+        # Create connection
+        credentials = pika.PlainCredentials(rabbitmq_user, rabbitmq_password)
+        connection = pika.BlockingConnection(
+            pika.ConnectionParameters(
+                host=rabbitmq_host,
+                port=rabbitmq_port,
+                credentials=credentials
+            )
+        )
+        channel = connection.channel()
+        
+        # Declare queue (idempotent - safe to call multiple times)
+        channel.queue_declare(queue=queue_name, durable=True)
+        
+        # Create message
+        message = {
+            'post_id': post_id,
+            'image_path': image_path
+        }
+        
+        # Publish message
+        channel.basic_publish(
+            exchange='',
+            routing_key=queue_name,
+            body=json.dumps(message),
+            properties=pika.BasicProperties(
+                delivery_mode=2,  # Make message persistent
+            )
+        )
+        
+        connection.close()
+    except Exception as e:
+        # Log error but don't fail the request
+        # In production, you might want to use proper logging
+        print(f"Error sending message to queue: {e}")
+        # Don't raise - allow post creation to succeed even if queue fails
+
 
 # Pydantic models for request/response
 class PostCreate(BaseModel):
@@ -49,6 +128,7 @@ class PostCreate(BaseModel):
 class PostResponse(BaseModel):
     id: int
     image: str
+    image_thumbnail: Optional[str] = None
     text: str
     user: str
     created_at: str
@@ -83,7 +163,12 @@ def post_to_dict(post_tuple, current_user: Optional[str] = None):
     """Convert post tuple to dictionary with additional info."""
     if not post_tuple:
         return None
-    post_id, image, text, user, created_at = post_tuple
+    # Handle both old format (5 elements) and new format (6 elements)
+    if len(post_tuple) == 5:
+        post_id, image, text, user, created_at = post_tuple
+        image_thumbnail = None
+    else:
+        post_id, image, image_thumbnail, text, user, created_at = post_tuple
     
     # Get additional info
     likes_count = db.get_like_count(post_id)
@@ -94,6 +179,7 @@ def post_to_dict(post_tuple, current_user: Optional[str] = None):
     return {
         'id': post_id,
         'image': image,
+        'image_thumbnail': image_thumbnail,
         'text': text,
         'user': user,
         'created_at': created_at.isoformat() if isinstance(created_at, datetime) else str(created_at),
@@ -160,6 +246,84 @@ async def create_post(post: PostCreate):
         if not created_post:
             raise HTTPException(status_code=500, detail="Failed to retrieve created post")
         return post_to_dict(created_post, current_user=post.user)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/posts/upload", response_model=PostResponse, status_code=201)
+async def upload_post_with_image(
+    file: UploadFile = File(...),
+    text: str = Form(...),
+    user: str = Form(...),
+    tags: Optional[str] = Form(None)
+):
+    """Create a new post with uploaded image file."""
+    try:
+        # Validate file
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="No file provided")
+        
+        if not is_allowed_file(file.filename):
+            raise HTTPException(
+                status_code=400,
+                detail=f"File type not allowed. Allowed types: {', '.join(ALLOWED_EXTENSIONS)}"
+            )
+        
+        # Check if user can post (timer check)
+        last_post_time = db.get_user_last_post_time(user)
+        if last_post_time:
+            COOLDOWN_SECONDS = 3600  # 1 hour
+            time_since_last_post = (datetime.now() - last_post_time).total_seconds()
+            if time_since_last_post < COOLDOWN_SECONDS:
+                time_remaining = int(COOLDOWN_SECONDS - time_since_last_post)
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Please wait {time_remaining} seconds before posting again"
+                )
+        
+        # Generate unique filename
+        file_ext = Path(file.filename).suffix.lower()
+        unique_filename = f"{uuid.uuid4()}{file_ext}"
+        file_path = UPLOAD_FULL_DIR / unique_filename
+        
+        # Save file
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        # Create relative URL for the image
+        image_url = f"/uploads/full/{unique_filename}"
+        
+        # Create post in database
+        post_id = db.insert_post(image=image_url, text=text, user=user)
+        
+        # Extract tags from text and form
+        import re
+        hashtag_pattern = r'#([\w\u0400-\u04FF]+)'
+        extracted_tags = [tag.lower() for tag in re.findall(hashtag_pattern, text)]
+        
+        # Parse tags from form (comma-separated)
+        form_tags = []
+        if tags:
+            form_tags = [tag.strip().lower() for tag in tags.split(",") if tag.strip()]
+        
+        # Combine tags
+        all_tags = list(set(extracted_tags + form_tags))
+        
+        # Add tags if any found
+        if all_tags:
+            db.add_tags_to_post(post_id, all_tags)
+        
+        # Send image to queue for thumbnail generation
+        send_image_to_queue(post_id, str(file_path))
+        
+        # Get created post
+        created_post = db.get_post_by_id(post_id)
+        if not created_post:
+            raise HTTPException(status_code=500, detail="Failed to retrieve created post")
+        
+        return post_to_dict(created_post, current_user=user)
     except HTTPException:
         raise
     except Exception as e:
@@ -351,6 +515,33 @@ async def serve_logo():
         status_code=404, 
         detail=f"Logo not found. Checked: {possible_paths}. CWD: {os.getcwd()}"
     )
+
+
+@app.get("/uploads/{subdir}/{filename}")
+async def serve_uploaded_file(subdir: str, filename: str):
+    """Serve uploaded image files."""
+    # Security: only allow 'full' and 'thumbnails' subdirectories
+    if subdir not in ["full", "thumbnails"]:
+        raise HTTPException(status_code=403, detail="Invalid subdirectory")
+    
+    file_path = UPLOAD_DIR / subdir / filename
+    
+    # Security: check if file exists and is within upload directory
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    # Determine media type from extension
+    ext = file_path.suffix.lower()
+    media_types = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".gif": "image/gif",
+        ".webp": "image/webp"
+    }
+    media_type = media_types.get(ext, "application/octet-stream")
+    
+    return FileResponse(file_path, media_type=media_type)
 
 
 if __name__ == '__main__':

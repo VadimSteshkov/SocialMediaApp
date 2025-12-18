@@ -1,0 +1,13 @@
+# Image Resize Microservice dependencies
+
+# Message Queue
+pika>=1.3.2
+
+# Image processing
+Pillow>=10.0.0
+
+# Database
+psycopg2-binary>=2.9.9
+
+
+

@@ -24,8 +24,10 @@ COPY api.py .
 COPY database.py .
 COPY static/ ./static/
 
-# Create directory for database (if needed)
-RUN mkdir -p /app/data
+# Create directories for database and uploads
+RUN mkdir -p /app/data && \
+    mkdir -p /app/uploads/full && \
+    mkdir -p /app/uploads/thumbnails
 
 # Expose port
 EXPOSE 5001
