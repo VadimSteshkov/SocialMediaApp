@@ -1,0 +1,41 @@
+# Dockerfile for Image Resize Microservice
+FROM python:3.12-slim
+
+# Set working directory
+WORKDIR /app
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# Install system dependencies for image processing
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    libjpeg-dev \
+    zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements
+COPY requirements-resize.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements-resize.txt
+
+# Copy application code
+COPY image_resize_service.py .
+COPY database.py .
+
+# Create upload directories
+RUN mkdir -p /app/uploads/full && \
+    mkdir -p /app/uploads/thumbnails
+
+# Health check (simple - just check if process is running)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD pgrep -f image_resize_service.py || exit 1
+
+# Run the service
+CMD ["python", "image_resize_service.py"]
+
+
+
