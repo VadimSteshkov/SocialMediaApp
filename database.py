@@ -66,7 +66,12 @@ class Database:
             self._init_postgres_connection()
         else:
             # SQLite fallback
-            self.db_path = db_path or os.getenv('DB_PATH', 'social_media.db')
+            # Default to data/social_media.db for better organization
+            default_path = os.getenv('DB_PATH', 'data/social_media.db')
+            self.db_path = db_path or default_path
+            # Ensure data directory exists
+            if self.db_path and '/' in self.db_path:
+                os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
             self._init_sqlite_connection()
         
         self.init_database()
@@ -145,6 +150,8 @@ class Database:
                         image_thumbnail TEXT,
                         text TEXT NOT NULL,
                         "user" TEXT NOT NULL,
+                        sentiment TEXT,
+                        sentiment_score REAL,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
@@ -158,6 +165,25 @@ class Database:
                             WHERE table_name='posts' AND column_name='image_thumbnail'
                         ) THEN
                             ALTER TABLE posts ADD COLUMN image_thumbnail TEXT;
+                        END IF;
+                    END $$;
+                """)
+                
+                # Add sentiment columns if they don't exist
+                cursor.execute("""
+                    DO $$ 
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name='posts' AND column_name='sentiment'
+                        ) THEN
+                            ALTER TABLE posts ADD COLUMN sentiment TEXT;
+                        END IF;
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name='posts' AND column_name='sentiment_score'
+                        ) THEN
+                            ALTER TABLE posts ADD COLUMN sentiment_score REAL;
                         END IF;
                     END $$;
                 """)
@@ -227,6 +253,8 @@ class Database:
                 image_thumbnail TEXT,
                 text TEXT NOT NULL,
                 user TEXT NOT NULL,
+                sentiment TEXT,
+                sentiment_score REAL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -239,6 +267,14 @@ class Database:
                 if 'image_thumbnail' not in columns:
                     cursor.execute("""
                         ALTER TABLE posts ADD COLUMN image_thumbnail TEXT
+                    """)
+                if 'sentiment' not in columns:
+                    cursor.execute("""
+                        ALTER TABLE posts ADD COLUMN sentiment TEXT
+                    """)
+                if 'sentiment_score' not in columns:
+                    cursor.execute("""
+                        ALTER TABLE posts ADD COLUMN sentiment_score REAL
                     """)
                 
                 cursor.execute("""
@@ -387,26 +423,56 @@ class Database:
             cursor.close()
             conn.close()
     
-    def get_latest_post(self) -> Optional[Tuple[int, str, Optional[str], str, str, str]]:
+    def update_post_sentiment(self, post_id: int, sentiment: str, sentiment_score: float):
+        """
+        Update the sentiment analysis result for a post.
+        
+        Args:
+            post_id: The ID of the post
+            sentiment: Sentiment label (POSITIVE, NEGATIVE, NEUTRAL)
+            sentiment_score: Sentiment confidence score (0.0 to 1.0)
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            if self.db_type == 'postgresql':
+                cursor.execute("""
+                    UPDATE posts SET sentiment = %s, sentiment_score = %s WHERE id = %s
+                """, (sentiment, sentiment_score, post_id))
+            else:
+                cursor.execute("""
+                    UPDATE posts SET sentiment = ?, sentiment_score = ? WHERE id = ?
+                """, (sentiment, sentiment_score, post_id))
+            
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            raise e
+        finally:
+            cursor.close()
+            conn.close()
+    
+    def get_latest_post(self) -> Optional[Tuple[int, str, Optional[str], str, str, Optional[str], Optional[float], str]]:
         """
         Retrieve the latest post from the database.
         
         Returns:
-            Tuple of (id, image, image_thumbnail, text, user, created_at) or None if no posts exist
+            Tuple of (id, image, image_thumbnail, text, user, sentiment, sentiment_score, created_at) or None if no posts exist
         """
         conn = self._get_connection()
         cursor = conn.cursor()
         
         if self.db_type == 'postgresql':
             query = """
-                SELECT id, image, image_thumbnail, text, "user", created_at
+                SELECT id, image, image_thumbnail, text, "user", sentiment, sentiment_score, created_at
                 FROM posts
                 ORDER BY created_at DESC
                 LIMIT 1
             """
         else:
             query = """
-            SELECT id, image, image_thumbnail, text, user, created_at
+            SELECT id, image, image_thumbnail, text, user, sentiment, sentiment_score, created_at
             FROM posts
             ORDER BY created_at DESC
             LIMIT 1
@@ -419,25 +485,25 @@ class Database:
         
         return result
     
-    def get_all_posts(self) -> List[Tuple[int, str, Optional[str], str, str, str]]:
+    def get_all_posts(self) -> List[Tuple[int, str, Optional[str], str, str, Optional[str], Optional[float], str]]:
         """
         Retrieve all posts from the database.
         
         Returns:
-            List of tuples containing (id, image, image_thumbnail, text, user, created_at)
+            List of tuples containing (id, image, image_thumbnail, text, user, sentiment, sentiment_score, created_at)
         """
         conn = self._get_connection()
         cursor = conn.cursor()
         
         if self.db_type == 'postgresql':
             query = """
-                SELECT id, image, image_thumbnail, text, "user", created_at
+                SELECT id, image, image_thumbnail, text, "user", sentiment, sentiment_score, created_at
                 FROM posts
                 ORDER BY created_at DESC
             """
         else:
             query = """
-            SELECT id, image, image_thumbnail, text, user, created_at
+            SELECT id, image, image_thumbnail, text, user, sentiment, sentiment_score, created_at
             FROM posts
             ORDER BY created_at DESC
             """
@@ -449,7 +515,7 @@ class Database:
         
         return results
     
-    def get_post_by_id(self, post_id: int) -> Optional[Tuple[int, str, Optional[str], str, str, str]]:
+    def get_post_by_id(self, post_id: int) -> Optional[Tuple[int, str, Optional[str], str, str, Optional[str], Optional[float], str]]:
         """
         Retrieve a post by its ID.
         
@@ -457,20 +523,20 @@ class Database:
             post_id: The ID of the post to retrieve
             
         Returns:
-            Tuple of (id, image, image_thumbnail, text, user, created_at) or None if not found
+            Tuple of (id, image, image_thumbnail, text, user, sentiment, sentiment_score, created_at) or None if not found
         """
         conn = self._get_connection()
         cursor = conn.cursor()
         
         if self.db_type == 'postgresql':
             cursor.execute("""
-                SELECT id, image, image_thumbnail, text, "user", created_at
+                SELECT id, image, image_thumbnail, text, "user", sentiment, sentiment_score, created_at
                 FROM posts
                 WHERE id = %s
             """, (post_id,))
         else:
             cursor.execute("""
-                SELECT id, image, image_thumbnail, text, user, created_at
+                SELECT id, image, image_thumbnail, text, user, sentiment, sentiment_score, created_at
                 FROM posts
                 WHERE id = ?
             """, (post_id,))
@@ -481,7 +547,7 @@ class Database:
         
         return result
     
-    def search_posts_by_user(self, user: str) -> List[Tuple[int, str, Optional[str], str, str, str]]:
+    def search_posts_by_user(self, user: str) -> List[Tuple[int, str, Optional[str], str, str, Optional[str], Optional[float], str]]:
         """
         Search for posts by username.
         
@@ -489,21 +555,21 @@ class Database:
             user: Username to search for
             
         Returns:
-            List of tuples containing (id, image, image_thumbnail, text, user, created_at)
+            List of tuples containing (id, image, image_thumbnail, text, user, sentiment, sentiment_score, created_at)
         """
         conn = self._get_connection()
         cursor = conn.cursor()
         
         if self.db_type == 'postgresql':
             cursor.execute("""
-                SELECT id, image, image_thumbnail, text, "user", created_at
+                SELECT id, image, image_thumbnail, text, "user", sentiment, sentiment_score, created_at
                 FROM posts
                 WHERE "user" = %s
                 ORDER BY created_at DESC
             """, (user,))
         else:
             cursor.execute("""
-                SELECT id, image, image_thumbnail, text, user, created_at
+                SELECT id, image, image_thumbnail, text, user, sentiment, sentiment_score, created_at
                 FROM posts
                 WHERE user = ?
                 ORDER BY created_at DESC
@@ -515,7 +581,7 @@ class Database:
         
         return results
     
-    def search_posts_by_text(self, text_query: str) -> List[Tuple[int, str, Optional[str], str, str, str]]:
+    def search_posts_by_text(self, text_query: str) -> List[Tuple[int, str, Optional[str], str, str, Optional[str], Optional[float], str]]:
         """
         Search for posts by text content (case-insensitive partial match).
         
@@ -523,21 +589,21 @@ class Database:
             text_query: Text to search for in post content
             
         Returns:
-            List of tuples containing (id, image, image_thumbnail, text, user, created_at)
+            List of tuples containing (id, image, image_thumbnail, text, user, sentiment, sentiment_score, created_at)
         """
         conn = self._get_connection()
         cursor = conn.cursor()
         
         if self.db_type == 'postgresql':
             cursor.execute("""
-                SELECT id, image, image_thumbnail, text, "user", created_at
+                SELECT id, image, image_thumbnail, text, "user", sentiment, sentiment_score, created_at
                 FROM posts
                 WHERE text ILIKE %s
                 ORDER BY created_at DESC
             """, (f'%{text_query}%',))
         else:
             cursor.execute("""
-                SELECT id, image, image_thumbnail, text, user, created_at
+                SELECT id, image, image_thumbnail, text, user, sentiment, sentiment_score, created_at
                 FROM posts
                 WHERE text LIKE ?
                 ORDER BY created_at DESC
@@ -931,7 +997,7 @@ class Database:
 
         return [row[0] for row in results]
     
-    def search_posts_by_tag(self, tag: str) -> List[Tuple[int, str, Optional[str], str, str, str]]:
+    def search_posts_by_tag(self, tag: str) -> List[Tuple[int, str, Optional[str], str, str, Optional[str], Optional[float], str]]:
         """
         Search for posts by tag.
         
@@ -939,7 +1005,7 @@ class Database:
             tag: Tag name to search for
             
         Returns:
-            List of tuples containing (id, image, image_thumbnail, text, user, created_at)
+            List of tuples containing (id, image, image_thumbnail, text, user, sentiment, sentiment_score, created_at)
         """
         conn = self._get_connection()
         cursor = conn.cursor()
@@ -948,7 +1014,7 @@ class Database:
         
         if self.db_type == 'postgresql':
             cursor.execute("""
-                SELECT DISTINCT p.id, p.image, p.image_thumbnail, p.text, p."user", p.created_at
+                SELECT DISTINCT p.id, p.image, p.image_thumbnail, p.text, p."user", p.sentiment, p.sentiment_score, p.created_at
                 FROM posts p
                 JOIN post_tags pt ON p.id = pt.post_id
                 JOIN tags t ON pt.tag_id = t.id
@@ -957,7 +1023,7 @@ class Database:
             """, (tag_normalized,))
         else:
             cursor.execute("""
-                SELECT DISTINCT p.id, p.image, p.image_thumbnail, p.text, p.user, p.created_at
+                SELECT DISTINCT p.id, p.image, p.image_thumbnail, p.text, p.user, p.sentiment, p.sentiment_score, p.created_at
                 FROM posts p
                 JOIN post_tags pt ON p.id = pt.post_id
                 JOIN tags t ON pt.tag_id = t.id

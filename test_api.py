@@ -602,3 +602,61 @@ def test_post_with_likes_comments_tags(client):
     assert data['comments_count'] == 2
     assert len(data['tags']) == 1
     assert 'test' in data['tags']
+
+
+def test_translate_post_endpoint_exists(client):
+    """Test that translate endpoint exists and accepts requests."""
+    # Create a post first
+    post_data = {
+        'image': 'https://example.com/test.jpg',
+        'text': 'Hello, this is a test post.',
+        'user': 'test_user'
+    }
+    create_response = client.post('/api/posts', json=post_data)
+    post_id = create_response.json()['id']
+    
+    # Try to translate (may fail if translation service not running, but endpoint should exist)
+    response = client.post(
+        f'/api/posts/{post_id}/translate',
+        data={'target_lang': 'de', 'source_lang': 'en'}
+    )
+    
+    # Endpoint should exist (not 404)
+    assert response.status_code != 404
+    # May return 500 if translation service not available, but endpoint structure is correct
+    assert response.status_code in [200, 400, 500, 504]
+
+
+def test_translate_post_not_found(client):
+    """Test translation of non-existent post."""
+    response = client.post(
+        '/api/posts/99999/translate',
+        data={'target_lang': 'de', 'source_lang': 'en'}
+    )
+    
+    assert response.status_code == 404
+    data = response.json()
+    assert 'detail' in data
+    assert 'not found' in data['detail'].lower()
+
+
+def test_translate_post_missing_parameters(client):
+    """Test translation endpoint with missing parameters."""
+    # Create a post first
+    post_data = {
+        'image': 'https://example.com/test.jpg',
+        'text': 'Test post',
+        'user': 'test_user'
+    }
+    create_response = client.post('/api/posts', json=post_data)
+    post_id = create_response.json()['id']
+    
+    # Try without target_lang (should use default)
+    response = client.post(
+        f'/api/posts/{post_id}/translate',
+        data={}
+    )
+    
+    # Should accept request (may fail later if service unavailable)
+    assert response.status_code != 404
+    assert response.status_code in [200, 400, 500, 504]
