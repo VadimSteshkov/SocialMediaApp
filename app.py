@@ -44,12 +44,21 @@ def main():
     latest_post = db.get_latest_post()
     
     if latest_post:
-        # Handle both old format (5 elements) and new format (6 elements)
+        # Handle different tuple formats
         if len(latest_post) == 5:
+            # Old format: (id, image, text, user, created_at)
             post_id, image, text, user, created_at = latest_post
             image_thumbnail = None
-        else:
+            sentiment = None
+            sentiment_score = None
+        elif len(latest_post) == 6:
+            # Format with thumbnail: (id, image, image_thumbnail, text, user, created_at)
             post_id, image, image_thumbnail, text, user, created_at = latest_post
+            sentiment = None
+            sentiment_score = None
+        else:
+            # New format with sentiment: (id, image, image_thumbnail, text, user, sentiment, sentiment_score, created_at)
+            post_id, image, image_thumbnail, text, user, sentiment, sentiment_score, created_at = latest_post
         print(f"\nLatest Post:")
         print(f"  ID: {post_id}")
         print(f"  User: {user}")
@@ -57,6 +66,8 @@ def main():
         print(f"  Image: {image}")
         if image_thumbnail:
             print(f"  Thumbnail: {image_thumbnail}")
+        if sentiment:
+            print(f"  Sentiment: {sentiment} (score: {sentiment_score:.2f})")
         print(f"  Created at: {created_at}")
     else:
         print("No posts found in the database.")
