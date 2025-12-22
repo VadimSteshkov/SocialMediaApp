@@ -245,6 +245,24 @@ header h1 {
     border-color: #3a3a3a;
 }
 
+.generate-text-btn {
+    width: 100% !important;
+    margin-top: 8px !important;
+    margin-right: 0 !important;
+    margin-left: 0 !important;
+    margin-bottom: 0 !important;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    box-sizing: border-box;
+}
+
+.generate-text-icon {
+    font-size: 18px;
+    line-height: 1;
+}
+
 .message {
     margin-top: 20px;
     padding: 12px 16px;

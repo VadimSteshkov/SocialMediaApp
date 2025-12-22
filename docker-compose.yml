@@ -133,6 +133,24 @@ services:
     networks:
       - social-media-network
 
+  # Text Generation Microservice
+  text-generation:
+    build:
+      context: .
+      dockerfile: Dockerfile.textgen
+    container_name: social-media-text-generation
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=${RABBITMQ_USER:-guest}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-guest}
+    restart: unless-stopped
+    networks:
+      - social-media-network
+
 volumes:
   postgres_data:
     driver: local

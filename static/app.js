@@ -102,6 +102,102 @@ function extractHashtags(text) {
     return matches.map(tag => tag.substring(1).toLowerCase()).filter(tag => tag.length > 0);
 }
 
+// Generate text for post
+async function generateText() {
+    const textArea = document.getElementById('text');
+    const generateBtn = document.getElementById('generateTextBtn');
+    const messageDiv = document.getElementById('submitMessage');
+    
+    if (!textArea || !generateBtn) return;
+    
+    const currentText = textArea.value.trim();
+    const tags = extractHashtags(currentText);
+    
+    // Extract text without tags
+    const textWithoutTags = currentText.replace(/#[\w\u0400-\u04FF]+/g, '').trim();
+    
+    // Check if we have text or tags
+    if (!textWithoutTags && tags.length === 0) {
+        messageDiv.className = 'message error';
+        messageDiv.textContent = 'Please enter text or tags to generate a post';
+        messageDiv.style.display = 'block';
+        messageDiv.style.opacity = '1';
+        setTimeout(() => {
+            messageDiv.style.opacity = '0';
+            setTimeout(() => {
+                messageDiv.style.display = 'none';
+            }, 300);
+        }, 3000);
+        return;
+    }
+    
+    // Disable button and show loading
+    generateBtn.disabled = true;
+    const textSpan = generateBtn.querySelector('span:last-child');
+    if (textSpan) {
+        textSpan.textContent = 'Generating...';
+    }
+    
+    try {
+        const formData = new FormData();
+        if (textWithoutTags) {
+            formData.append('prompt_text', textWithoutTags);
+        }
+        if (tags.length > 0) {
+            formData.append('tags', tags.join(' '));
+        }
+        formData.append('max_new_tokens', '60');
+        formData.append('temperature', '0.75');
+        
+        const response = await fetch(`${API_BASE_URL}/posts/generate-text`, {
+            method: 'POST',
+            body: formData
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok && data.generated_text) {
+            // Replace text in textarea with generated text
+            textArea.value = data.generated_text;
+            
+            // Show success message
+            messageDiv.className = 'message success';
+            messageDiv.textContent = 'Text generated successfully! You can edit it before submitting.';
+            messageDiv.style.display = 'block';
+            messageDiv.style.opacity = '1';
+            
+            setTimeout(() => {
+                messageDiv.style.opacity = '0';
+                setTimeout(() => {
+                    messageDiv.style.display = 'none';
+                }, 300);
+            }, 3000);
+        } else {
+            throw new Error(data.detail || 'Failed to generate text');
+        }
+    } catch (error) {
+        messageDiv.className = 'message error';
+        messageDiv.textContent = `Error: ${error.message}`;
+        messageDiv.style.display = 'block';
+        messageDiv.style.opacity = '1';
+        
+        setTimeout(() => {
+            messageDiv.style.opacity = '0';
+            setTimeout(() => {
+                messageDiv.style.display = 'none';
+            }, 300);
+        }, 5000);
+    } finally {
+        // Re-enable button
+        generateBtn.disabled = false;
+        const iconSpan = generateBtn.querySelector('.generate-text-icon');
+        const textSpan = generateBtn.querySelector('span:last-child');
+        if (textSpan && textSpan.textContent !== 'Generate Text') {
+            textSpan.textContent = 'Generate Text';
+        }
+    }
+}
+
 // Submit a new post
 async function submitPost(event) {
     event.preventDefault();
@@ -1100,6 +1196,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 smartSearch();
             }
         });
+    }
+    
+    // Generate text button
+    const generateTextBtn = document.getElementById('generateTextBtn');
+    if (generateTextBtn) {
+        generateTextBtn.addEventListener('click', generateText);
     }
 });
 

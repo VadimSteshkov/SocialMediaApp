@@ -444,6 +444,137 @@ async def search_posts(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/posts/generate-text")
+async def generate_text(
+    prompt_text: Optional[str] = Form(None),
+    tags: Optional[str] = Form(None),
+    max_new_tokens: int = Form(60),
+    temperature: float = Form(0.75)
+):
+    """
+    Generate text for a post based on user input (text or tags).
+    
+    Args:
+        prompt_text: User's text to improve/continue
+        tags: Tags to generate post about
+        max_new_tokens: Maximum tokens to generate
+        temperature: Generation temperature (0.7-0.9)
+    
+    Returns:
+        Generated text
+    """
+    try:
+        import pika
+        import json
+        import uuid
+        import time
+        
+        # Validate input
+        if not prompt_text and not tags:
+            raise HTTPException(
+                status_code=400,
+                detail="Please enter text or tags to generate a post"
+            )
+        
+        # Get RabbitMQ connection parameters
+        rabbitmq_host = os.getenv('RABBITMQ_HOST', 'localhost')
+        rabbitmq_port = int(os.getenv('RABBITMQ_PORT', '5672'))
+        rabbitmq_user = os.getenv('RABBITMQ_USER', 'guest')
+        rabbitmq_password = os.getenv('RABBITMQ_PASSWORD', 'guest')
+        
+        # Generate unique request ID
+        request_id = str(uuid.uuid4())
+        
+        # Prepare message
+        message = {
+            'request_id': request_id,
+            'prompt_text': prompt_text or '',
+            'tags': tags or '',
+            'max_new_tokens': max_new_tokens,
+            'temperature': temperature
+        }
+        
+        # Connect to RabbitMQ
+        credentials = pika.PlainCredentials(rabbitmq_user, rabbitmq_password)
+        connection = pika.BlockingConnection(
+            pika.ConnectionParameters(
+                host=rabbitmq_host,
+                port=rabbitmq_port,
+                credentials=credentials
+            )
+        )
+        channel = connection.channel()
+        
+        # Declare queues
+        channel.queue_declare(queue='text_generation_queue', durable=True)
+        channel.queue_declare(queue='text_generation_response_queue', durable=True)
+        
+        # Send request
+        channel.basic_publish(
+            exchange='',
+            routing_key='text_generation_queue',
+            body=json.dumps(message),
+            properties=pika.BasicProperties(
+                delivery_mode=2,
+                correlation_id=request_id
+            )
+        )
+        
+        # Wait for response (polling with timeout)
+        timeout = 60  # seconds
+        start_time = time.time()
+        response_received = False
+        response_data = None
+        
+        def on_response(ch, method, properties, body):
+            nonlocal response_received, response_data
+            try:
+                data = json.loads(body)
+                if data.get('request_id') == request_id:
+                    response_data = data
+                    response_received = True
+                    ch.basic_ack(delivery_tag=method.delivery_tag)
+                else:
+                    # Not our response, requeue
+                    ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
+            except Exception as e:
+                ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+        
+        # Set up consumer
+        channel.basic_consume(
+            queue='text_generation_response_queue',
+            on_message_callback=on_response
+        )
+        
+        # Poll for response
+        while not response_received and (time.time() - start_time) < timeout:
+            connection.process_data_events(time_limit=1)
+            time.sleep(0.1)
+        
+        connection.close()
+        
+        if not response_received:
+            raise HTTPException(
+                status_code=504,
+                detail="Timeout waiting for text generation response"
+            )
+        
+        if 'error' in response_data:
+            raise HTTPException(
+                status_code=400,
+                detail=response_data['error']
+            )
+        
+        return {
+            "generated_text": response_data.get('generated_text', '')
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate text: {str(e)}")
+
+
 @app.get("/api/posts/{post_id}", response_model=PostResponse)
 async def get_post(post_id: int, current_user: Optional[str] = Query(None, description="Current user for like status")):
     """Get a specific post by ID."""
