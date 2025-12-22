@@ -117,6 +117,64 @@ def send_image_to_queue(post_id: int, image_path: str):
         # Don't raise - allow post creation to succeed even if queue fails
 
 
+def send_sentiment_to_queue(post_id: int, text: str):
+    """
+    Send sentiment analysis task to RabbitMQ message queue.
+    
+    Args:
+        post_id: ID of the post
+        text: Text content of the post to analyze
+    """
+    try:
+        import pika
+        import json
+        
+        # Get RabbitMQ connection parameters from environment
+        rabbitmq_host = os.getenv('RABBITMQ_HOST', 'localhost')
+        rabbitmq_port = int(os.getenv('RABBITMQ_PORT', '5672'))
+        rabbitmq_user = os.getenv('RABBITMQ_USER', 'guest')
+        rabbitmq_password = os.getenv('RABBITMQ_PASSWORD', 'guest')
+        
+        # Queue name
+        queue_name = 'sentiment_analysis_queue'
+        
+        # Create connection
+        credentials = pika.PlainCredentials(rabbitmq_user, rabbitmq_password)
+        connection = pika.BlockingConnection(
+            pika.ConnectionParameters(
+                host=rabbitmq_host,
+                port=rabbitmq_port,
+                credentials=credentials
+            )
+        )
+        channel = connection.channel()
+        
+        # Declare queue (idempotent - safe to call multiple times)
+        channel.queue_declare(queue=queue_name, durable=True)
+        
+        # Create message
+        message = {
+            'post_id': post_id,
+            'text': text
+        }
+        
+        # Publish message
+        channel.basic_publish(
+            exchange='',
+            routing_key=queue_name,
+            body=json.dumps(message),
+            properties=pika.BasicProperties(
+                delivery_mode=2,  # Make message persistent
+            )
+        )
+        
+        connection.close()
+    except Exception as e:
+        # Log error but don't fail the request
+        print(f"Error sending sentiment analysis to queue: {e}")
+        # Don't raise - allow post creation to succeed even if queue fails
+
+
 # Pydantic models for request/response
 class PostCreate(BaseModel):
     image: str
@@ -136,6 +194,8 @@ class PostResponse(BaseModel):
     is_liked: bool = False
     comments_count: int = 0
     tags: List[str] = []
+    sentiment: Optional[str] = None
+    sentiment_score: Optional[float] = None
 
 
 class CommentCreate(BaseModel):
@@ -163,12 +223,18 @@ def post_to_dict(post_tuple, current_user: Optional[str] = None):
     """Convert post tuple to dictionary with additional info."""
     if not post_tuple:
         return None
-    # Handle both old format (5 elements) and new format (6 elements)
+    # Handle different tuple formats
     if len(post_tuple) == 5:
         post_id, image, text, user, created_at = post_tuple
         image_thumbnail = None
-    else:
+        sentiment = None
+        sentiment_score = None
+    elif len(post_tuple) == 6:
         post_id, image, image_thumbnail, text, user, created_at = post_tuple
+        sentiment = None
+        sentiment_score = None
+    else:  # 8 elements (with sentiment)
+        post_id, image, image_thumbnail, text, user, sentiment, sentiment_score, created_at = post_tuple
     
     # Get additional info
     likes_count = db.get_like_count(post_id)
@@ -186,7 +252,9 @@ def post_to_dict(post_tuple, current_user: Optional[str] = None):
         'likes_count': likes_count,
         'is_liked': is_liked,
         'comments_count': len(comments),
-        'tags': tags
+        'tags': tags,
+        'sentiment': sentiment,
+        'sentiment_score': sentiment_score
     }
 
 
@@ -241,6 +309,9 @@ async def create_post(post: PostCreate):
         # Add tags if any found
         if all_tags:
             db.add_tags_to_post(post_id, all_tags)
+        
+        # Send sentiment analysis task to queue
+        send_sentiment_to_queue(post_id, post.text)
         
         created_post = db.get_post_by_id(post_id)
         if not created_post:
@@ -317,6 +388,9 @@ async def upload_post_with_image(
         
         # Send image to queue for thumbnail generation
         send_image_to_queue(post_id, str(file_path))
+        
+        # Send sentiment analysis task to queue
+        send_sentiment_to_queue(post_id, text)
         
         # Get created post
         created_post = db.get_post_by_id(post_id)

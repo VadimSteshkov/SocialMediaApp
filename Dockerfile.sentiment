@@ -1,0 +1,34 @@
+# Dockerfile for Sentiment Analysis Microservice
+FROM python:3.12-slim
+
+# Set working directory
+WORKDIR /app
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# Install system dependencies for transformers
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements
+COPY requirements-sentiment.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements-sentiment.txt
+
+# Copy application code
+COPY sentiment_analysis_service.py .
+COPY database.py .
+
+# Health check (simple - just check if process is running)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD pgrep -f sentiment_analysis_service.py || exit 1
+
+# Run the service
+CMD ["python", "sentiment_analysis_service.py"]
+

@@ -412,6 +412,26 @@ function createPostCard(post, currentUser = '') {
     const fullImageUrl = post.image;
     const hasThumbnail = post.image_thumbnail && post.image_thumbnail !== post.image;
     
+    // Sentiment icon (green for positive, red for negative, yellow for neutral)
+    let sentimentIcon = '';
+    if (post.sentiment) {
+        let sentimentColor = '';
+        let sentimentIconName = '';
+        if (post.sentiment === 'POSITIVE') {
+            sentimentColor = '#2E7D32'; // Dark green
+            sentimentIconName = 'sentiment_very_satisfied';
+        } else if (post.sentiment === 'NEGATIVE') {
+            sentimentColor = '#C62828'; // Dark red
+            sentimentIconName = 'mood_bad';
+        } else {
+            sentimentColor = '#F57F17'; // Dark yellow/orange
+            sentimentIconName = 'sentiment_neutral';
+        }
+        sentimentIcon = `<div class="sentiment-btn" style="background-color: ${sentimentColor};" title="Sentiment: ${post.sentiment}">
+            <span class="material-symbols-outlined sentiment-icon">${sentimentIconName}</span>
+        </div>`;
+    }
+    
     // Image HTML with click handler for full-size view with comments
     const imageHtml = `<div class="post-image-container">
         <img src="${escapeHtml(imageUrl)}" alt="Post image" class="post-image ${hasThumbnail ? 'post-image-thumbnail' : ''}" 
@@ -430,14 +450,17 @@ function createPostCard(post, currentUser = '') {
             ${imageHtml}
             ${tagsHtml}
             <div class="post-actions">
-                <button class="like-btn ${likeClass}" data-post-id="${post.id}" data-user="${escapeHtml(currentUser)}">
-                    <span class="like-icon">${likeIconSvg}</span>
-                    <span class="like-count">${post.likes_count || 0}</span>
-                </button>
-                <button class="comment-btn" data-post-id="${post.id}">
-                    <span class="comment-icon">${commentIconSvg}</span>
-                    <span class="comment-count">${post.comments_count || 0}</span>
-                </button>
+                <div class="post-actions-left">
+                    <button class="like-btn ${likeClass}" data-post-id="${post.id}" data-user="${escapeHtml(currentUser)}">
+                        <span class="like-icon">${likeIconSvg}</span>
+                        <span class="like-count">${post.likes_count || 0}</span>
+                    </button>
+                    <button class="comment-btn" data-post-id="${post.id}">
+                        <span class="comment-icon">${commentIconSvg}</span>
+                        <span class="comment-count">${post.comments_count || 0}</span>
+                    </button>
+                </div>
+                ${sentimentIcon}
             </div>
             <div class="comments-section" id="comments-${post.id}" style="display: none;">
                 <div class="comments-list" id="comments-list-${post.id}"></div>
