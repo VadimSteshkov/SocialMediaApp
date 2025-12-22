@@ -66,7 +66,12 @@ class Database:
             self._init_postgres_connection()
         else:
             # SQLite fallback
-            self.db_path = db_path or os.getenv('DB_PATH', 'social_media.db')
+            # Default to data/social_media.db for better organization
+            default_path = os.getenv('DB_PATH', 'data/social_media.db')
+            self.db_path = db_path or default_path
+            # Ensure data directory exists
+            if self.db_path and '/' in self.db_path:
+                os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
             self._init_sqlite_connection()
         
         self.init_database()

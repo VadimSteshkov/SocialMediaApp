@@ -575,6 +575,150 @@ async def generate_text(
         raise HTTPException(status_code=500, detail=f"Failed to generate text: {str(e)}")
 
 
+# IMPORTANT: This endpoint must be defined BEFORE /api/posts/{post_id} to avoid route conflicts
+@app.post("/api/posts/{post_id}/translate")
+async def translate_post(
+    post_id: int,
+    target_lang: str = Form('en'),
+    source_lang: Optional[str] = Form(None)
+):
+    """
+    Translate post text to target language.
+    
+    Args:
+        post_id: ID of the post to translate
+        target_lang: Target language code (default: 'en')
+        source_lang: Source language code (auto-detect if None)
+    
+    Returns:
+        Translated text
+    """
+    try:
+        import pika
+        import json
+        import uuid
+        import time
+        
+        # Get post
+        post = db.get_post_by_id(post_id)
+        if not post:
+            raise HTTPException(status_code=404, detail="Post not found")
+        
+        # Extract text from post tuple
+        # Post tuple format: (id, image, image_thumbnail, text, user, sentiment, sentiment_score, created_at)
+        if len(post) == 8:
+            text = post[3]  # text is at index 3
+        elif len(post) == 6:
+            text = post[3]  # text is at index 3
+        elif len(post) == 5:
+            text = post[2]  # text is at index 2 (old format)
+        else:
+            raise HTTPException(status_code=500, detail=f"Invalid post format: expected 5, 6, or 8 elements, got {len(post)}")
+        
+        if not text or not text.strip():
+            raise HTTPException(status_code=400, detail="Post has no text to translate")
+        
+        # Get RabbitMQ connection parameters
+        rabbitmq_host = os.getenv('RABBITMQ_HOST', 'localhost')
+        rabbitmq_port = int(os.getenv('RABBITMQ_PORT', '5672'))
+        rabbitmq_user = os.getenv('RABBITMQ_USER', 'guest')
+        rabbitmq_password = os.getenv('RABBITMQ_PASSWORD', 'guest')
+        
+        # Generate unique request ID
+        request_id = str(uuid.uuid4())
+        
+        # Prepare message
+        message = {
+            'request_id': request_id,
+            'text': text,
+            'source_lang': source_lang,
+            'target_lang': target_lang
+        }
+        
+        # Connect to RabbitMQ
+        credentials = pika.PlainCredentials(rabbitmq_user, rabbitmq_password)
+        connection = pika.BlockingConnection(
+            pika.ConnectionParameters(
+                host=rabbitmq_host,
+                port=rabbitmq_port,
+                credentials=credentials
+            )
+        )
+        channel = connection.channel()
+        
+        # Declare queues
+        channel.queue_declare(queue='translation_queue', durable=True)
+        channel.queue_declare(queue='translation_response_queue', durable=True)
+        
+        # Send request
+        channel.basic_publish(
+            exchange='',
+            routing_key='translation_queue',
+            body=json.dumps(message),
+            properties=pika.BasicProperties(
+                delivery_mode=2,
+                correlation_id=request_id
+            )
+        )
+        
+        # Wait for response (polling with timeout)
+        timeout = 60  # seconds
+        start_time = time.time()
+        response_received = False
+        response_data = None
+        
+        def on_response(ch, method, properties, body):
+            nonlocal response_received, response_data
+            try:
+                data = json.loads(body)
+                if data.get('request_id') == request_id:
+                    response_data = data
+                    response_received = True
+                    ch.basic_ack(delivery_tag=method.delivery_tag)
+                else:
+                    # Not our response, requeue
+                    ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
+            except Exception as e:
+                ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+        
+        # Set up consumer
+        channel.basic_consume(
+            queue='translation_response_queue',
+            on_message_callback=on_response
+        )
+        
+        # Poll for response
+        while not response_received and (time.time() - start_time) < timeout:
+            connection.process_data_events(time_limit=1)
+            time.sleep(0.1)
+        
+        connection.close()
+        
+        if not response_received:
+            raise HTTPException(
+                status_code=504,
+                detail="Timeout waiting for translation response"
+            )
+        
+        if 'error' in response_data:
+            raise HTTPException(
+                status_code=400,
+                detail=response_data['error']
+            )
+        
+        return {
+            "translated_text": response_data.get('translated_text', text),
+            "detected_lang": response_data.get('detected_lang', 'en'),
+            "source_lang": response_data.get('source_lang'),
+            "target_lang": response_data.get('target_lang', target_lang)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to translate text: {str(e)}")
+
+
 @app.get("/api/posts/{post_id}", response_model=PostResponse)
 async def get_post(post_id: int, current_user: Optional[str] = Query(None, description="Current user for like status")):
     """Get a specific post by ID."""

@@ -102,6 +102,65 @@ function extractHashtags(text) {
     return matches.map(tag => tag.substring(1).toLowerCase()).filter(tag => tag.length > 0);
 }
 
+// Detect language of text (simple heuristic)
+function detectLanguage(text) {
+    if (!text) return 'en';
+    // Check for Cyrillic characters (Russian)
+    if (/[\u0400-\u04FF]/.test(text)) {
+        return 'ru';
+    }
+    // Check for German characters
+    if (/[äöüßÄÖÜ]/.test(text)) {
+        return 'de';
+    }
+    // Check for Spanish characters
+    if (/[ñáéíóúüÑÁÉÍÓÚÜ]/.test(text)) {
+        return 'es';
+    }
+    // Check for French characters
+    if (/[àâäéèêëïîôùûüÿçÀÂÄÉÈÊËÏÎÔÙÛÜŸÇ]/.test(text)) {
+        return 'fr';
+    }
+    // Default to English
+    return 'en';
+}
+
+// Get translate link text based on language
+function getTranslateLinkText(lang) {
+    const translations = {
+        'en': 'Translate text',
+        'ru': 'Перевести текст',
+        'de': 'Text übersetzen',
+        'es': 'Traducir texto',
+        'fr': 'Traduire le texte'
+    };
+    return translations[lang] || 'Translate text';
+}
+
+// Get "Show original" text based on language
+function getShowOriginalText(lang) {
+    const translations = {
+        'en': 'Show original',
+        'ru': 'Показать оригинал',
+        'de': 'Original anzeigen',
+        'es': 'Mostrar original',
+        'fr': 'Afficher l\'original'
+    };
+    return translations[lang] || 'Show original';
+}
+
+// Get "Translating..." text based on language
+function getTranslatingText(lang) {
+    const translations = {
+        'en': 'Translating...',
+        'ru': 'Переводится...',
+        'de': 'Übersetze...',
+        'es': 'Traduciendo...',
+        'fr': 'Traduction...'
+    };
+    return translations[lang] || 'Translating...';
+}
+
 // Generate text for post
 async function generateText() {
     const textArea = document.getElementById('text');
@@ -542,7 +601,10 @@ function createPostCard(post, currentUser = '') {
                 <span class="post-user">@${escapeHtml(post.user)}</span>
                 <span class="post-date">${formattedDate}</span>
             </div>
-            <div class="post-text">${escapeHtml(removeHashtags(post.text))}</div>
+            <div class="post-text" id="post-text-${post.id}">${escapeHtml(removeHashtags(post.text))}</div>
+            <div class="translate-link-container">
+                <a href="#" class="translate-link" data-post-id="${post.id}" data-original-text="${escapeHtml(removeHashtags(post.text).replace(/"/g, '&quot;'))}" data-post-lang="${detectLanguage(post.text)}">${getTranslateLinkText(detectLanguage(post.text))}</a>
+            </div>
             ${imageHtml}
             ${tagsHtml}
             <div class="post-actions">
@@ -736,6 +798,90 @@ function attachPostEventListeners() {
             }
         });
     });
+    
+    // Translate links
+    document.querySelectorAll('.translate-link').forEach(link => {
+        link.addEventListener('click', function(e) {
+            e.preventDefault();
+            const postId = parseInt(this.getAttribute('data-post-id'));
+            const originalText = this.getAttribute('data-original-text');
+            const postLang = this.getAttribute('data-post-lang') || 'en';
+            translatePost(postId, originalText, this, postLang);
+        });
+    });
+}
+
+// Translate post text
+async function translatePost(postId, originalText, linkElement, postLang = 'en') {
+    if (linkElement.classList.contains('translating')) {
+        return; // Already translating
+    }
+    
+    const postTextElement = document.getElementById(`post-text-${postId}`);
+    if (!postTextElement) {
+        return;
+    }
+    
+    // Decode HTML entities for comparison
+    const decodeHtml = (html) => {
+        const txt = document.createElement('textarea');
+        txt.innerHTML = html;
+        return txt.value;
+    };
+    
+    const decodedOriginal = decodeHtml(originalText);
+    const currentText = postTextElement.textContent.trim();
+    const isTranslated = currentText !== decodedOriginal;
+    
+    // Determine target language (translate to German if post is not German, otherwise translate to English)
+    const targetLang = postLang === 'en' ? 'de' : 'en';
+    
+    if (isTranslated) {
+        // Revert to original
+        postTextElement.textContent = decodedOriginal;
+        linkElement.textContent = getTranslateLinkText(postLang);
+        linkElement.classList.remove('translating');
+        return;
+    }
+    
+    // Start translation
+    linkElement.classList.add('translating');
+    linkElement.textContent = getTranslatingText(postLang);
+    
+    try {
+        const formData = new FormData();
+        formData.append('target_lang', targetLang);
+        formData.append('source_lang', postLang);
+        
+        const response = await fetch(`${API_BASE_URL}/posts/${postId}/translate`, {
+            method: 'POST',
+            body: formData
+        });
+        
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+            throw new Error(errorData.detail || `HTTP ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        if (data.translated_text) {
+            // Replace text with translated version
+            postTextElement.textContent = data.translated_text;
+            linkElement.textContent = getShowOriginalText(postLang);
+            linkElement.classList.remove('translating');
+        } else {
+            throw new Error(data.detail || 'Failed to translate text');
+        }
+    } catch (error) {
+        console.error('Error translating post:', error);
+        const errorMsg = postLang === 'ru' 
+            ? `Ошибка перевода: ${error.message}` 
+            : `Translation error: ${error.message}`;
+        alert(errorMsg);
+        linkElement.textContent = getTranslateLinkText(postLang);
+        linkElement.classList.remove('translating');
+    }
 }
 
 // Show full-size image in modal

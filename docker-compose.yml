@@ -151,6 +151,24 @@ services:
     networks:
       - social-media-network
 
+  # Translation Microservice
+  translation:
+    build:
+      context: .
+      dockerfile: Dockerfile.translation
+    container_name: social-media-translation
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=${RABBITMQ_USER:-guest}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-guest}
+    restart: unless-stopped
+    networks:
+      - social-media-network
+
 volumes:
   postgres_data:
     driver: local

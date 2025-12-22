@@ -64,8 +64,12 @@ db.sqlite3-journal
 # Social Media App database files
 social_media.db
 social_media.db-journal
+data/social_media.db
+data/social_media.db-journal
 test_social_media.db
 test_social_media.db-journal
+test_*.db
+*.db-journal
 
 # Flask stuff:
 instance/

@@ -459,10 +459,38 @@ header h1 {
 }
 
 .post-text {
-    margin-bottom: 12px;
+    margin-bottom: 8px;
     line-height: 1.6;
     color: #d0d0d0;
     font-size: 14px;
+}
+
+.translate-link-container {
+    margin-bottom: 12px;
+}
+
+.translate-link {
+    color: #4a9eff;
+    text-decoration: none;
+    font-size: 13px;
+    cursor: pointer;
+    transition: color 0.2s ease;
+    display: inline-block;
+}
+
+.translate-link:hover {
+    color: #6bb5ff;
+    text-decoration: underline;
+}
+
+.translate-link:active {
+    color: #3a8eef;
+}
+
+.translate-link.translating {
+    color: #888;
+    cursor: wait;
+    text-decoration: none;
 }
 
 .hashtag-in-text {
