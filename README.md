@@ -134,31 +134,31 @@ The application is built using:
 - `requirements-sentiment.txt`, `requirements-textgen.txt`, `requirements-translation.txt`
 - `test_translation.py` - Translation service tests
 
-## ✨ Features
+## Features
 
 ### Core Features
-- ✅ Create posts with images and text
-- ✅ Like and comment on posts
-- ✅ Search posts by user, text, or tags
-- ✅ User authentication (username-based)
-- ✅ Post cooldown timer (1 hour between posts)
+- Create posts with images and text
+- Like and comment on posts
+- Search posts by user, text, or tags
+- User authentication (username-based)
+- Post cooldown timer (1 hour between posts)
 
 ### Image Features
-- ✅ Image upload (drag & drop or file picker)
-- ✅ Automatic thumbnail generation
-- ✅ Full-size image viewing with comments
-- ✅ Image URL support
+- Image upload (drag & drop or file picker)
+- Automatic thumbnail generation
+- Full-size image viewing with comments
+- Image URL support
 
 ### Machine Learning Features
-- ✅ **Sentiment Analysis**: Automatic sentiment detection with visual indicators
-- ✅ **Text Generation**: AI-powered post text generation
-- ✅ **Translation**: Multi-language post translation
+- **Sentiment Analysis**: Automatic sentiment detection with visual indicators
+- **Text Generation**: AI-powered post text generation
+- **Translation**: Multi-language post translation
 
 ### Social Features
-- ✅ Hashtag support (#tag)
-- ✅ Tag-based search
-- ✅ Like counts and comment counts
-- ✅ User-specific like tracking
+- Hashtag support (#tag)
+- Tag-based search
+- Like counts and comment counts
+- User-specific like tracking
 
 ## 🏗️ Architecture
 
