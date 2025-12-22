@@ -57,7 +57,7 @@ def test_get_latest_post(test_db):
     latest = test_db.get_latest_post()
     
     assert latest is not None
-    post_id, image, image_thumbnail, text, user, created_at = latest
+    post_id, image, image_thumbnail, text, user, sentiment, sentiment_score, created_at = latest
     
     # Latest post should be the third one
     assert text == "Third post"
@@ -89,7 +89,7 @@ def test_get_all_posts(test_db):
     all_posts = test_db.get_all_posts()
     
     assert len(all_posts) == 2
-    # Tuple structure: (id, image, image_thumbnail, text, user, created_at)
+    # Tuple structure: (id, image, image_thumbnail, text, user, sentiment, sentiment_score, created_at)
     assert all_posts[0][3] == "Post 2"  # Latest first (text is at index 3)
     assert all_posts[1][3] == "Post 1"
 
@@ -105,7 +105,7 @@ def test_post_fields(test_db):
     latest = test_db.get_latest_post()
     assert latest is not None
     
-    post_id, image, image_thumbnail, text, user, created_at = latest
+    post_id, image, image_thumbnail, text, user, sentiment, sentiment_score, created_at = latest
     
     assert image == "https://example.com/image.jpg"
     assert image_thumbnail is None  # No thumbnail for test posts
