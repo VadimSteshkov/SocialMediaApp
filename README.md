@@ -2,21 +2,6 @@
 
 A modern social media application built with microservices architecture, featuring machine learning capabilities for sentiment analysis, text generation, and translation. This project demonstrates a complete full-stack application with REST API, web frontend, and asynchronous processing using message queues.
 
-## 📋 Table of Contents
-
-- [Overview](#overview)
-- [Project Evolution (Exercises 1-6)](#project-evolution-exercises-1-6)
-- [Features](#features)
-- [Architecture](#architecture)
-- [Quick Start](#quick-start)
-- [Installation](#installation)
-- [Usage](#usage)
-- [API Documentation](#api-documentation)
-- [Microservices](#microservices)
-- [Testing](#testing)
-- [Deployment](#deployment)
-- [Project Structure](#project-structure)
-
 ## 🎯 Overview
 
 This social media application allows users to:
